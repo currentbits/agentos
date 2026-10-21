@@ -56,6 +56,7 @@ test/smoke.sh
 | Agent CLIs | `claude` (native installer), `codex`, `opencode`, `grok` (xAI Grok Build, latest release, `https://x.ai/cli/install.sh`) — installed into `~agent` |
 | Desktop | tigervnc-standalone-server, xfce4-session, xfwm4, xfce4-panel, xfdesktop4, xfce4-terminal, dbus-x11, xdotool, scrot, xclip, chromium, fonts-dejavu, fonts-noto-color-emoji. No Thunar, plugins, screensaver, power manager |
 | Remote view | novnc, websockify |
+| Local console | cage, foot (used only in `terminal` console mode) |
 | Toolchains | build-essential, Go (apt), Rust (rustup), Bun, Docker CE, OpenJDK 21, Playwright + its Chromium |
 
 ### Size budget
@@ -136,6 +137,7 @@ TS_AUTHKEY=tskey-auth-...
 AGENTOS_MAX_DESKTOPS=8
 AGENTOS_SCREENSHOT_WIDTH=1366
 AGENTOS_LAN_SSH=0
+AGENTOS_CONSOLE=headless
 ANTHROPIC_API_KEY=...
 OPENAI_API_KEY=...
 GROK_CODE_XAI_API_KEY=...
@@ -153,7 +155,17 @@ Oneshot, before desktop/MCP units, re-runs on each boot until it succeeds:
 
 ### `agentos-config`
 
-Whiptail TUI, runnable any time (`sudo agentos-config`). Sets: password for `agent`, SSH authorized keys (paste or GitHub username lookup), Tailscale auth key, API keys / OAuth token, LAN SSH toggle, max desktops, screenshot width. Writes `agentos.env` and re-runs firstboot.
+Whiptail TUI, runnable any time (`sudo agentos-config`). Sets: password for `agent`, SSH authorized keys (paste or GitHub username lookup), Tailscale auth key, API keys / OAuth token, LAN SSH toggle, console mode, max desktops, screenshot width. Writes `agentos.env` and re-runs firstboot.
+
+### Local console
+
+`AGENTOS_CONSOLE=headless|terminal`, chosen in the installer, changeable in `agentos-config`.
+
+- **headless** (default): tty1 shows a status banner (hostname, IPs, tailnet name, desktop count) above a normal login prompt.
+- **terminal**: for a machine with a monitor and keyboard. After a normal login on tty1, the `agent` login shell runs `cage -- foot -e tmux new -A -s main`: a full-screen terminal with proper Unicode, truecolor and mouse support. The raw Linux VT can't render agent TUIs properly. Login is still required, with no autologin.
+  - The same tmux session `main` is reachable over SSH (`tmux attach -t main`), so you can start an agent at the desk and keep watching it remotely.
+  - Adds `cage` (Wayland kiosk compositor) and `foot` (terminal), about 5 MB. Uses the kernel's generic KMS/simpledrm display, so no GPU firmware is needed.
+  - `ponytail:` no local XFCE desktop on the physical screen. The desktops stay virtual (Section 2). Add a `desktop` console mode if someone wants local GUI use.
 
 ### Lockout prevention
 
@@ -187,7 +199,8 @@ Packaging: mkosi has no ISO output, but `Format=disk` + `ElTorito=yes` produces 
 4. Access (skippable) — password for `agent` and/or SSH public key (paste or GitHub username lookup).
 5. Tailscale auth key (skippable).
 6. API keys (skippable).
-7. Summary → install:
+7. Local console mode — `headless` (default) or `terminal` (see "Local console" below).
+8. Summary → install:
    - `systemd-repart --empty=force` lays out ESP + BIOS boot + root, copying root from `agentos.raw`; root grows to fill the disk.
    - Write `agentos.env`, hostname, network config, credentials into the new root.
    - `grub-install` for UEFI (removable/fallback path `\EFI\BOOT\BOOTX64.EFI`, no NVRAM entry needed) and BIOS.
