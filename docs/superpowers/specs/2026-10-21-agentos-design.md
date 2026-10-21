@@ -52,7 +52,7 @@ test/smoke.sh
 | Base | `linux-image-amd64`, `amd64-microcode`, `intel-microcode`, systemd, systemd-repart, grub (efi + pc), shim-signed, cloud-init, openssh-server, sudo, nftables, unattended-upgrades, tailscale (upstream apt repo) |
 | NIC firmware | `firmware-realtek`, `firmware-bnx2`, `firmware-bnx2x`, `firmware-qlogic`, `firmware-misc-nonfree` (Intel/Mellanox NICs). Not `firmware-linux`: it drags in GPU firmware a headless box never loads |
 | Guest agents | `qemu-guest-agent`, `hyperv-daemons`, `open-vm-tools` — each gated by `ConditionVirtualization` |
-| Agent runtime | git, curl, ca-certificates, ripgrep, fd-find, jq, tmux, unzip, whiptail, Node 22 LTS, Python 3 + venv + pipx |
+| Agent runtime | git, curl, ca-certificates, ripgrep, fd-find, jq, tmux, unzip, whiptail, Node 24 LTS (NodeSource; current Active LTS), Python 3 + venv + pipx |
 | Agent CLIs | `claude` (native installer), `codex`, `opencode`, `grok` (xAI Grok Build, latest release, `https://x.ai/cli/install.sh`) — installed into `~agent` |
 | Desktop | tigervnc-standalone-server, xfce4-session, xfwm4, xfce4-panel, xfdesktop4, xfce4-terminal, dbus-x11, xdotool, scrot, xclip, chromium, fonts-dejavu, fonts-noto-color-emoji. No Thunar, plugins, screensaver, power manager |
 | Remote view | novnc, websockify |
@@ -185,11 +185,11 @@ If `agent` has no password, no SSH key, and Tailscale is not up, tty1 autologins
 
 `mkosi.images/installer` builds a minimal live system (generic kernel, firmware, systemd, systemd-repart, grub, whiptail) that embeds the AgentOS root partition (zstd-compressed, ~1.5 GB). Boots straight into `agentos-install` on tty1 (Alt+F2 for a shell).
 
-Packaging: mkosi has no ISO output, but `Format=disk` + `ElTorito=yes` produces one GPT disk image that also carries an El Torito boot catalog. That single file `agentos-installer.img` (~2 GB):
-- written to USB (`dd`, Etcher, Rufus DD mode): boots UEFI and BIOS;
+Packaging: mkosi has no ISO output, but `Format=disk` + `ElTorito=yes` produces one GPT disk image that also carries an El Torito boot catalog. mkosi documents El Torito as incompatible with grub as BIOS bootloader, so the **installer** image is UEFI-only. That single file `agentos-installer.img` (~2 GB):
+- written to USB (`dd`, Etcher, Rufus DD mode): boots UEFI;
 - attached as a virtual CD / IPMI virtual media (renamed `.iso`): boots UEFI.
 
-`ponytail:` BIOS-only machines must boot the installer from USB, not CD. Add a post-build `xorriso` step with isolinux if BIOS CD boot is ever needed.
+The **installed system and the VM images** stay hybrid UEFI + BIOS (they carry no El Torito catalog), so BIOS-only clouds and hypervisors still work. `ponytail:` BIOS-only bare metal can't run the installer; `dd` `agentos.raw` to its disk instead. Add a post-build `xorriso` + isolinux step if that's ever needed.
 
 ### Interactive flow
 
@@ -325,7 +325,7 @@ LUKS with TPM2 unlock; an egress allowlist mode (agent may reach only LLM APIs, 
 
 - **Grok**: xAI's official Grok Build (`grok`, Apache-2.0, `xai-org/grok-build`), latest release via `https://x.ai/cli/install.sh`; headless auth via `GROK_CODE_XAI_API_KEY`.
 - **Image size**: targeted firmware instead of `firmware-linux`, Rust `minimal` profile, doc/locale stripping; 4 GB target, CI fails above 4.5 GB.
-- **ISO**: mkosi `Format=disk` + `ElTorito=yes`, one hybrid `.img` (USB: UEFI+BIOS; virtual CD: UEFI). No separate ISO tooling.
+- **ISO**: mkosi `Format=disk` + `ElTorito=yes`, one `.img` for USB and virtual CD, UEFI-only (El Torito and grub-BIOS are mutually exclusive in mkosi). Installed systems and VM images remain UEFI + BIOS. No separate ISO tooling.
 
 ## Open items to resolve during planning
 
