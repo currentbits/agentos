@@ -12,24 +12,34 @@ rm -rf /usr/share/locale/*
 
 fail() { echo "IMAGE INVARIANT VIOLATED: $*" >&2; exit 1; }
 
-compgen -G '/etc/ssh/ssh_host_*' >/dev/null && fail "SSH host keys baked into image"
-[ -s /etc/machine-id ] && [ "$(cat /etc/machine-id)" != uninitialized ] && fail "machine-id baked into image"
-[ -n "$(ls -A /var/lib/tailscale 2>/dev/null)" ] && fail "tailscale state baked into image"
-for f in /home/agent/.claude/.credentials.json /home/agent/.codex/auth.json \
-         /home/agent/.local/share/opencode/auth.json /home/agent/.grok/auth.json; do
-  [ -e "$f" ] && fail "CLI auth state baked into image: $f"
-done
-
 dpkg-query -W -f '${Package} ${Version}\n' > /var/lib/agentos-manifest.txt
 
+# --version runs write CLI state (~/.claude.json with machine/user IDs, ~/.codex/tmp, ...), so
+# run them with a throwaway HOME; binaries still resolve through the agent's real PATH.
+AGENT_PATH=$(runuser -u agent -- bash -lc 'echo "$PATH"')
+vhome=$(runuser -u agent -- mktemp -d)
 {
   echo "# agent CLIs"
   for c in claude codex opencode grok; do
-    p=$(runuser -u agent -- bash -lc "readlink -f \"\$(command -v $c)\"")
-    v=$(runuser -u agent -- bash -lc "set -o pipefail; $c --version 2>/dev/null | head -1")
+    p=$(runuser -u agent -- env PATH="$AGENT_PATH" bash -c "readlink -f \"\$(command -v $c)\"")
+    v=$(runuser -u agent -- env HOME="$vhome" PATH="$AGENT_PATH" bash -c "set -o pipefail; $c --version 2>/dev/null | head -1")
     [ -n "$v" ] || fail "no --version output for $c"
     echo "$c ${v// /_} $(sha256sum "$p" | cut -d' ' -f1)"
   done
 } >> /var/lib/agentos-manifest.txt
+rm -rf "$vhome"
+
+# Invariants last, after everything above that could have written state.
+A=/home/agent
+compgen -G '/etc/ssh/ssh_host_*' >/dev/null && fail "SSH host keys baked into image"
+[ -s /etc/machine-id ] && [ "$(cat /etc/machine-id)" != uninitialized ] && fail "machine-id baked into image"
+[ -n "$(ls -A /var/lib/tailscale 2>/dev/null)" ] && fail "tailscale state baked into image"
+# Spec: no ~agent/.claude* at all (we deliberately ship no claude settings yet).
+compgen -G "$A/.claude*" >/dev/null && fail "claude state baked into image: $(echo "$A"/.claude*)"
+for f in "$A/.codex/auth.json" \
+         "$A/.local/share/opencode/auth.json" "$A/.local/share/opencode/mcp-auth.json" \
+         "$A/.grok/auth.json" "$A/.grok/mcp_credentials.json"; do
+  [ -e "$f" ] && fail "CLI auth state baked into image: $f"
+done
 
 echo "image invariants OK"
