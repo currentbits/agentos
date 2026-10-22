@@ -1,0 +1,5 @@
+#!/bin/bash
+# Runs inside the finished image tree, after RemoveFiles.
+set -euo pipefail
+
+chmod 0440 /etc/sudoers.d/agent

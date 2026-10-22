@@ -15,3 +15,4 @@ check_sshd_hardening() {
 }
 check_root_grown()        { vm 'test "$(df --output=size -BG / | tail -1 | tr -dc 0-9)" -ge 35'; }
 check_networkd_dhcp()     { vm 'networkctl status >/dev/null && getent hosts deb.debian.org >/dev/null'; }
+check_sudoers_mode()      { vm 'sudo stat -c %a /etc/sudoers.d/agent | grep -qx 440'; }
