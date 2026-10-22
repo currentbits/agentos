@@ -1,6 +1,8 @@
 # shellcheck shell=bash
 # AgentOS KEY=VALUE env-file helpers. Sourced by agentos-firstboot and agentos-config.
+# shellcheck disable=SC2034 # used by scripts that source this file, not by env.sh itself
 AGENTOS_ENV=/etc/agentos/agentos.env
+# shellcheck disable=SC2034 # used by scripts that source this file, not by env.sh itself
 AGENTOS_SECRETS=/home/agent/.config/agentos/secrets.env
 
 env_get() {

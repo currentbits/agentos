@@ -37,6 +37,7 @@ cmd_apply() { /usr/local/sbin/agentos-firstboot; }
 menu() {
   while true; do
     local c
+    # shellcheck disable=SC1010 # "done" below is a whiptail menu tag, not the loop keyword
     c=$(whiptail --title "AgentOS configuration" --menu "Choose a setting" 22 72 12 \
       password  "Set password for 'agent' (console + sudo)" \
       sshkey    "Add an SSH public key" \
