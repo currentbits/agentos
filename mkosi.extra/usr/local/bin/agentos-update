@@ -12,7 +12,7 @@ step() {  # step <label> <command...>
   else echo "FAIL  $label (see below)"; tail -5 /tmp/agentos-update.log | sed 's/^/      /'; FAILED=1; fi
 }
 
-step "apt"      sudo bash -c 'apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get -y -qq upgrade'
+step "apt"      sudo bash -c 'apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 -y -qq full-upgrade'
 step "claude"   claude update
 step "codex"    npm install -g @openai/codex@latest
 step "opencode" opencode upgrade
