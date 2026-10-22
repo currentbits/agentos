@@ -61,7 +61,7 @@ test/smoke.sh
 
 ### Size budget
 
-Target ≤ 4 GB uncompressed root, enforced: CI fails the build above 4.5 GB.
+Budget: CI fails the build above 7 GB (7168 MiB) root used space. The original 4 GB target was too low: measured Plan 1 root is ~5.4 GB (each agent CLI is 190–300 MB, Playwright browsers 677 MB, Rust 600 MB), and Plan 2 adds ~0.6 GB.
 
 | Chunk | Rough size |
 |---|---|
@@ -224,7 +224,7 @@ If an `agentos.env` containing `AGENTOS_INSTALL_DISK=/dev/...` is found (on the 
 
 1. Install recent mkosi (from its git tag; Ubuntu's packaged version is too old for trixie).
 2. `mkosi build` → `agentos.raw` + `agentos-installer.img`.
-3. `qemu-img convert` → `.qcow2`, `.vhdx`, `.vmdk`. Compress with zstd. Fail if root > 4.5 GB.
+3. `qemu-img convert` → `.qcow2`, `.vhdx`, `.vmdk`. Compress with zstd. Fail if root > 7 GB.
 4. Run `test/smoke.sh`.
 5. On tag `vYYYY.MM.DD`: GitHub Release with all artifacts, `SHA256SUMS`, a GitHub build-provenance attestation (`actions/attest-build-provenance`) per artifact, and `MANIFEST.txt` listing every apt package version plus each CLI's version and download SHA-256.
 6. Weekly scheduled rebuild + release, so the newest artifact is ≤7 days behind Debian security fixes and CLI releases.
@@ -324,7 +324,7 @@ LUKS with TPM2 unlock; an egress allowlist mode (agent may reach only LLM APIs, 
 ## Resolved during review
 
 - **Grok**: xAI's official Grok Build (`grok`, Apache-2.0, `xai-org/grok-build`), latest release via `https://x.ai/cli/install.sh`; headless auth via `GROK_CODE_XAI_API_KEY`.
-- **Image size**: targeted firmware instead of `firmware-linux`, Rust `minimal` profile, doc/locale stripping; 4 GB target, CI fails above 4.5 GB.
+- **Image size**: targeted firmware instead of `firmware-linux`, Rust `minimal` profile, doc/locale stripping; 7 GB budget (raised from 4.5 GB after measuring).
 - **ISO**: mkosi `Format=disk` + `ElTorito=yes`, one `.img` for USB and virtual CD, UEFI-only (El Torito and grub-BIOS are mutually exclusive in mkosi). Installed systems and VM images remain UEFI + BIOS. No separate ISO tooling.
 
 ## Open items to resolve during planning

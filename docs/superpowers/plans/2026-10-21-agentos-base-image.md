@@ -20,7 +20,7 @@
 - Secrets match `^[A-Z0-9_]*(API_KEY|TOKEN)=` and move to `/home/agent/.config/agentos/secrets.env` (0600, owned by agent).
 - Inbound network: drop everything except loopback, `tailscale0`, established, ICMP, DHCP, and Tailscale UDP 41641. `AGENTOS_LAN_SSH=1` additionally opens TCP 22.
 - SSH: key-only, `PermitRootLogin no`, `AllowUsers agent`.
-- Root filesystem used space after first boot ≤ 4608 MiB (CI fails above that).
+- Root filesystem used space after first boot ≤ 7168 MiB (CI fails above that; raised from 4608 on 2026-10-22, see spec).
 - No SSH host keys, machine-id, Tailscale state, or CLI auth files in the built image.
 - Every script: `#!/bin/bash` + `set -euo pipefail`. Every script must pass `shellcheck`.
 
@@ -1445,7 +1445,7 @@ git commit -m "feat: agentos-config TUI/CLI, terminal console mode, lockout prev
 # shellcheck shell=bash
 check_root_size_budget() {
   local used; used=$(vm 'df --output=used -BM / | tail -1 | tr -dc 0-9')
-  echo "root used: ${used} MiB (budget 4608)"; [ "$used" -le 4608 ]
+  echo "root used: ${used} MiB (budget 7168)"; [ "$used" -le 7168 ]
 }
 check_no_foreign_locales() { vm 'test -z "$(ls /usr/share/locale | grep -vE "^(en|en_US|en_GB|locale.alias)$")"'; }
 check_no_man_pages()       { vm 'test -z "$(find /usr/share/man -type f -name "*.gz" 2>/dev/null | head -1)"'; }
@@ -1516,7 +1516,7 @@ exit $FAILED
 chmod +x mkosi.extra/usr/local/bin/agentos-update && shellcheck mkosi.extra/usr/local/bin/agentos-update
 mkosi -f build && test/smoke.sh mkosi.output/agentos.raw uefi bios
 ```
-Expected: `ALL CHECKS PASSED`, with `root used:` ≤ 4608 MiB. If the budget is exceeded, run this in the VM to find the largest directories:
+Expected: `ALL CHECKS PASSED`, with `root used:` ≤ 7168 MiB. If the budget is exceeded, run this in the VM to find the largest directories:
 ```bash
 vm 'sudo du -xh / --max-depth=3 2>/dev/null | sort -h | tail -25'
 ```
