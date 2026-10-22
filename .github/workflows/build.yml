@@ -61,7 +61,7 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: "release/agentos-*"
+          subject-path: "release/*"
 
       - name: Release
         if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'schedule'
@@ -69,5 +69,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="v${{ steps.ver.outputs.v }}"
-          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --title "AgentOS $tag" --notes-file release/MANIFEST.txt
+          # Combined into the release notes, not uploaded as its own asset
+          # (it lives outside release/, so release/* below won't pick it up).
+          cat release/README-download.txt release/MANIFEST.txt > release-notes.txt
+          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --title "AgentOS $tag" --notes-file release-notes.txt
           gh release upload "$tag" release/* --clobber
