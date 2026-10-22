@@ -6,6 +6,11 @@ done
 export PATH
 
 # AgentOS: API keys / tokens for agent CLIs (written by agentos-firstboot / agentos-config).
+# Parsed, never sourced: values are data, not shell.
 if [ -r "$HOME/.config/agentos/secrets.env" ]; then
-  set -a; . "$HOME/.config/agentos/secrets.env"; set +a
+  while IFS='=' read -r _ag_k _ag_v; do
+    case $_ag_k in ''|[!A-Z_]*|*[!A-Z0-9_]*) continue ;; esac
+    export "$_ag_k=$_ag_v"
+  done < "$HOME/.config/agentos/secrets.env"
+  unset _ag_k _ag_v
 fi

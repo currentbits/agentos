@@ -11,3 +11,7 @@ check_no_tskey_ok()         { vm '! sudo grep -q "^TS_AUTHKEY=" /etc/agentos/age
 check_firstboot_rerun_idempotent() {
   vm 'sudo /usr/local/sbin/agentos-firstboot && test "$(grep -c ANTHROPIC_API_KEY ~/.config/agentos/secrets.env)" = 1'
 }
+check_secret_value_not_evaluated() {
+  vm 'sudo agentos-firstboot >/dev/null; printf "%s\n" "WEIRD_TOKEN=a b \$(touch /tmp/agentos-pwned)" >> ~/.config/agentos/secrets.env'
+  vml 'test "$WEIRD_TOKEN" = "a b \$(touch /tmp/agentos-pwned)" && test ! -e /tmp/agentos-pwned'
+}

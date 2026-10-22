@@ -10,6 +10,12 @@ env_set "$f" OTHER 1;               [ "$(env_get "$f" OTHER)" = 1 ]
 env_unset "$f" FOO;                 [ -z "$(env_get "$f" FOO)" ]; [ "$(env_get "$f" OTHER)" = 1 ]
 ! env_set "$f" 'bad-key' x 2>/dev/null
 ! env_set "$f" GOOD $'two\nlines' 2>/dev/null
+weird='a b $(touch /tmp/agentos-pwned) "q" $HOME'
+env_set "$f" WEIRD "$weird";        [ "$(env_get "$f" WEIRD)" = "$weird" ]
+# NOTE: "! env_get ... 'BAD.KEY'" (as worded in the brief) would not abort this
+# script on failure: under `set -e`, a bare `! cmd` is exempt from errexit, so a
+# wrongly-successful env_get would be silently ignored. Use an explicit guard instead.
+env_get "$f" 'BAD.KEY' >/dev/null 2>&1 && { echo "env_get accepted invalid key" >&2; exit 1; }
 is_secret_key ANTHROPIC_API_KEY; is_secret_key CLAUDE_CODE_OAUTH_TOKEN; is_secret_key GEMINI_API_KEY
 ! is_secret_key TS_AUTHKEY; ! is_secret_key AGENTOS_LAN_SSH
 echo "env.sh OK"

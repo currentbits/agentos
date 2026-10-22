@@ -3,9 +3,13 @@
 AGENTOS_ENV=/etc/agentos/agentos.env
 AGENTOS_SECRETS=/home/agent/.config/agentos/secrets.env
 
-env_get() { [ -f "$1" ] && sed -n "s/^$2=//p" "$1" | tail -n1 || true; }
+env_get() {
+  [[ $2 =~ ^[A-Z_][A-Z0-9_]*$ ]] || return 2
+  [ -f "$1" ] && sed -n "s/^$2=//p" "$1" | tail -n1 || true
+}
 
 env_unset() {
+  [[ $2 =~ ^[A-Z_][A-Z0-9_]*$ ]] || return 2
   [ -f "$1" ] || return 0
   local tmp; tmp=$(mktemp "$1.XXXXXX")
   grep -v "^$2=" "$1" > "$tmp" || true
