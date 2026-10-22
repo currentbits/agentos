@@ -1,5 +1,18 @@
 #!/bin/bash
-# Runs inside the finished image tree, after RemoveFiles.
+# Runs inside the finished image tree, after RemoveFiles. Fails the build on leaked per-install state.
 set -euo pipefail
 
 chmod 0440 /etc/sudoers.d/agent
+
+fail() { echo "IMAGE INVARIANT VIOLATED: $*" >&2; exit 1; }
+
+compgen -G '/etc/ssh/ssh_host_*' >/dev/null && fail "SSH host keys baked into image"
+[ -s /etc/machine-id ] && [ "$(cat /etc/machine-id)" != uninitialized ] && fail "machine-id baked into image"
+[ -n "$(ls -A /var/lib/tailscale 2>/dev/null)" ] && fail "tailscale state baked into image"
+for f in /home/agent/.claude/.credentials.json /home/agent/.codex/auth.json \
+         /home/agent/.local/share/opencode/auth.json /home/agent/.grok/auth.json; do
+  [ -e "$f" ] && fail "CLI auth state baked into image: $f"
+done
+
+dpkg-query -W -f '${Package} ${Version}\n' > /var/lib/agentos-manifest.txt
+echo "image invariants OK"
