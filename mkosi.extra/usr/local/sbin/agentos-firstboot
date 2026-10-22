@@ -33,6 +33,9 @@ else
   rm -f /etc/apt/apt.conf.d/53agentos-noreboot
 fi
 
+# 4b. Re-apply firewall (env may have changed)
+/usr/local/sbin/agentos-firewall
+
 # 5. Tailscale last: a bad key must not block the steps above. Failure -> unit fails, retried next boot.
 k=$(env_get "$AGENTOS_ENV" TS_AUTHKEY)
 if [ -n "$k" ]; then

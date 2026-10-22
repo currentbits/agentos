@@ -1,0 +1,19 @@
+# AgentOS inbound policy. Own table, no `flush ruleset`: Docker and Tailscale rules stay intact.
+table inet agentos
+delete table inet agentos
+
+table inet agentos {
+  set public_tcp { type inet_service; }
+
+  chain input {
+    type filter hook input priority filter; policy drop;
+    ct state established,related accept
+    ct state invalid drop
+    iif lo accept
+    iifname "tailscale0" accept
+    meta l4proto { icmp, ipv6-icmp } accept
+    udp dport { 68, 546 } accept          # DHCP / DHCPv6 replies
+    udp dport 41641 accept                # Tailscale direct connections
+    tcp dport @public_tcp accept          # AGENTOS_LAN_SSH etc.
+  }
+}

@@ -1,0 +1,8 @@
+#!/bin/bash
+# Load AgentOS nftables policy and apply env-driven openings.
+set -euo pipefail
+. /usr/local/lib/agentos/env.sh
+nft -f /usr/local/lib/agentos/firewall.nft
+if [ "$(env_get "$AGENTOS_ENV" AGENTOS_LAN_SSH)" = 1 ]; then
+  nft add element inet agentos public_tcp '{ 22 }'
+fi

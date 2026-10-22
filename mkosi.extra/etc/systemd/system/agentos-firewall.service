@@ -1,0 +1,14 @@
+[Unit]
+Description=AgentOS: inbound firewall
+DefaultDependencies=no
+Before=network-pre.target
+Wants=network-pre.target
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/agentos-firewall
+
+[Install]
+WantedBy=sysinit.target
