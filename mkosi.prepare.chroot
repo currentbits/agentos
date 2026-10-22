@@ -3,4 +3,22 @@
 set -euo pipefail
 [ "${1:-final}" = final ] || exit 0
 
-id agent >/dev/null 2>&1 || useradd --create-home --uid 1000 --shell /bin/bash --groups sudo agent
+id agent >/dev/null 2>&1 || useradd --create-home --uid 1000 --shell /bin/bash --groups sudo,docker agent
+usermod -aG docker agent
+
+AGENT_PATH=/home/agent/.local/bin:/home/agent/.cargo/bin:/home/agent/.bun/bin:/home/agent/.opencode/bin:/home/agent/.grok/bin:/usr/local/bin:/usr/bin:/bin
+as_agent() {
+  runuser -u agent -- env -i HOME=/home/agent USER=agent PATH="$AGENT_PATH" \
+    SHELL=/bin/bash TERM=dumb bash -euo pipefail -c "$1"
+}
+
+# Rust: minimal profile (no offline docs) + clippy, rustfmt
+as_agent 'curl -fsSL https://sh.rustup.rs | sh -s -- -y --no-modify-path --profile minimal -c clippy,rustfmt'
+# Bun
+as_agent 'curl -fsSL https://bun.sh/install | bash'
+# npm global prefix inside ~/.local so `npm i -g` never needs root
+as_agent 'npm config set prefix "$HOME/.local"'
+# Playwright + its Chromium (browser in ~/.cache/ms-playwright); OS deps via apt as root
+as_agent 'npm install -g playwright'
+/home/agent/.local/bin/playwright install-deps chromium
+as_agent 'playwright install chromium'

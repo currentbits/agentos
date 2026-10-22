@@ -5,3 +5,6 @@ enable cloud-*.service
 enable qemu-guest-agent.service
 enable agentos-*.service
 disable nftables.service
+enable docker.service
+enable containerd.service
+enable tailscaled.service
