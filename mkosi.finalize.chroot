@@ -15,4 +15,14 @@ for f in /home/agent/.claude/.credentials.json /home/agent/.codex/auth.json \
 done
 
 dpkg-query -W -f '${Package} ${Version}\n' > /var/lib/agentos-manifest.txt
+
+{
+  echo "# agent CLIs"
+  for c in claude codex opencode grok; do
+    p=$(runuser -u agent -- bash -lc "readlink -f \"\$(command -v $c)\"")
+    v=$(runuser -u agent -- bash -lc "$c --version 2>/dev/null | head -1")
+    echo "$c ${v// /_} $(sha256sum "$p" | cut -d' ' -f1)"
+  done
+} >> /var/lib/agentos-manifest.txt
+
 echo "image invariants OK"

@@ -22,3 +22,18 @@ as_agent 'npm config set prefix "$HOME/.local"'
 as_agent 'npm install -g playwright'
 /home/agent/.local/bin/playwright install-deps chromium
 as_agent 'playwright install chromium'
+
+# Agent CLIs, each via its official installer, into the agent's home so self-updates work without root.
+as_agent 'curl -fsSL https://claude.ai/install.sh | bash'
+as_agent 'npm install -g @openai/codex'
+as_agent 'curl -fsSL https://opencode.ai/install | bash'
+as_agent 'curl -fsSL https://x.ai/cli/install.sh | bash'
+
+# Installers may edit ~/.bashrc / ~/.profile to add PATH lines; /etc/profile.d/agentos.sh owns PATH.
+cp /etc/skel/.bashrc /home/agent/.bashrc
+cp /etc/skel/.profile /home/agent/.profile
+chown agent:agent /home/agent/.bashrc /home/agent/.profile
+
+for c in claude codex opencode grok; do
+  as_agent "command -v $c >/dev/null" || { echo "agent CLI '$c' not on PATH after install" >&2; exit 1; }
+done
