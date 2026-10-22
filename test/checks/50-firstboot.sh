@@ -1,6 +1,7 @@
 # shellcheck shell=bash
 check_firstboot_ordering() {
-  vm 'a=$(systemctl show -p After --value agentos-firstboot); for u in cloud-config.target network-online.target tailscaled.service; do
+  vm 'systemctl cat cloud-config.target >/dev/null || { echo "no cloud-config.target unit"; exit 1; }
+      a=$(systemctl show -p After --value agentos-firstboot); for u in cloud-config.target network-online.target tailscaled.service; do
         echo " $a " | grep -q " $u " || { echo "missing After=$u"; exit 1; }; done'
 }
 check_pad_token_survives() {  # values ending in "=" must survive the agentos.env -> secrets.env move

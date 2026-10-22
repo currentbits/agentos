@@ -14,6 +14,7 @@ check_docker_explicit_public_blocked() {
   vm 'docker rm -f ag-web >/dev/null; curl -sf -m 5 http://127.0.0.1:8080/ >/dev/null || true'
   [ "$rc" -ne 0 ]
 }
-check_sysctl()          { vm 'test "$(/usr/sbin/sysctl -n kernel.kptr_restrict)" = 2 && test "$(/usr/sbin/sysctl -n kernel.unprivileged_bpf_disabled)" -ge 1'; }
+check_docker_live_restore() { vm 'test "$(sudo docker info --format "{{.LiveRestoreEnabled}}")" = true'; }
+check_sysctl()        { vm 'test "$(/usr/sbin/sysctl -n kernel.kptr_restrict)" = 2 && test "$(/usr/sbin/sysctl -n kernel.unprivileged_bpf_disabled)" -ge 1'; }
 check_unattended()      { vm 'systemctl is-enabled apt-daily-upgrade.timer && sudo unattended-upgrade --dry-run -d 2>&1 | grep -q "Allowed origins.*Debian-Security"'; }
 check_noreboot_honored(){ vm 'test -f /etc/apt/apt.conf.d/53agentos-noreboot'; }

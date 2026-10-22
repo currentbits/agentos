@@ -31,7 +31,24 @@ check_config_apply_restarts_unit() {  # apply must run firstboot as its unit, no
       sudo agentos-config apply &&
       test "$(systemctl show -p ActiveEnterTimestampMonotonic --value agentos-firstboot)" != "$t0"'
 }
-check_issue_banner()          { vm 'grep -q "agentos-config" /etc/issue'; }
+check_config_menu_survives_bad_input() {  # bad sshkey input: msgbox, back to the menu (not exit 2)
+  vm 'bash -s' <<'EOF'
+d=$(mktemp -d); trap 'rm -rf "$d"' EXIT
+# Fake whiptail (answers go to stderr, like whiptail): menu -> sshkey, inputbox -> junk, menu -> done.
+cat > "$d/whiptail" <<'W'
+#!/bin/bash
+d=$(dirname "$0"); echo "$*" >> "$d/log"
+case "$*" in
+  *--menu*)     if [ -e "$d/state" ]; then echo done >&2; else touch "$d/state"; echo sshkey >&2; fi ;;
+  *--inputbox*) echo "not-a-key" >&2 ;;
+esac
+W
+chmod +x "$d/whiptail"
+sudo env PATH="$d:$PATH" agentos-config || { echo "menu exited rc=$?"; cat "$d/log"; exit 1; }
+grep -q "SSH key not added: not an SSH public key" "$d/log" && test "$(grep -c -- --menu "$d/log")" = 2 || { cat "$d/log"; exit 1; }
+EOF
+}
+check_issue_banner()        { vm 'grep -q "agentos-config" /etc/issue'; }
 
 # Automated stand-in for the brief's manual Step 5 (no attached display in the smoke harness,
 # and tty1's VT output is not mirrored to the serial console this harness captures): assert the
