@@ -1,0 +1,23 @@
+#!/bin/bash
+# Update OS packages and every agent CLI/toolchain. Manual by design: never mid-task.
+set -uo pipefail
+[ "$(id -un)" = agent ] || { echo "run as the agent user" >&2; exit 2; }
+# shellcheck source=/dev/null
+. /etc/profile.d/agentos.sh
+
+FAILED=0
+step() {  # step <label> <command...>
+  local label=$1; shift
+  if "$@" >/tmp/agentos-update.log 2>&1; then echo "ok    $label"
+  else echo "FAIL  $label (see below)"; tail -5 /tmp/agentos-update.log | sed 's/^/      /'; FAILED=1; fi
+}
+
+step "apt"      sudo bash -c 'apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get -y -qq upgrade'
+step "claude"   claude update
+step "codex"    npm install -g @openai/codex@latest
+step "opencode" opencode upgrade
+step "grok"     bash -c 'grok update 2>/dev/null || curl -fsSL https://x.ai/cli/install.sh | bash'
+step "rustup"   rustup update
+step "bun"      bun upgrade
+step "playwright" bash -c 'npm install -g playwright@latest && playwright install chromium'
+exit $FAILED

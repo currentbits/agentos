@@ -4,6 +4,12 @@ set -euo pipefail
 
 chmod 0440 /etc/sudoers.d/agent
 
+# dpkg's path-exclude for /usr/share/locale/* (mkosi.skeleton/etc/dpkg/dpkg.cfg.d/01-agentos-nodoc)
+# does not take effect for every package that ships locale catalogs (verified: man/doc/info
+# excludes from the same file DO work; locale does not, even in isolation with plain dpkg
+# --unpack). Locale=C.UTF-8 means no translation catalogs are needed, so remove them directly.
+rm -rf /usr/share/locale/*
+
 fail() { echo "IMAGE INVARIANT VIOLATED: $*" >&2; exit 1; }
 
 compgen -G '/etc/ssh/ssh_host_*' >/dev/null && fail "SSH host keys baked into image"
