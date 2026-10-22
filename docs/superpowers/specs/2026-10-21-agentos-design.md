@@ -305,7 +305,7 @@ Every install and every VM from the same image must not share identity:
 
 ### Kernel and OS hardening (cheap defaults only)
 
-sysctl: `kernel.kptr_restrict=2`, `kernel.dmesg_restrict=1`, `kernel.unprivileged_bpf_disabled=1`, `net.core.bpf_jit_harden=2`, `kernel.yama.ptrace_scope=1`, `fs.protected_*=1/2`, `net.ipv4.conf.*.rp_filter=1`, no ICMP redirects. Services we ship (`agentos-mcp-http`, novnc) use systemd sandboxing: `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome=read-only` where possible, `PrivateTmp`.
+sysctl: `kernel.kptr_restrict=2`, `kernel.dmesg_restrict=1`, `kernel.unprivileged_bpf_disabled=1`, `net.core.bpf_jit_harden=2`, `kernel.yama.ptrace_scope=1`, `fs.protected_*=1/2`, `net.ipv4.conf.*.rp_filter=2` (loose, per Tailscale guidance), no ICMP redirects. Services we ship (`agentos-mcp-http`, novnc) use systemd sandboxing: `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome=read-only` where possible, `PrivateTmp`.
 
 Deliberately **not** done: AppArmor profiles for the agent CLIs, SELinux, dropping sudo. Each fights the agents' job of installing and running arbitrary software, while the box is already the boundary.
 
