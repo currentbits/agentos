@@ -1,0 +1,2 @@
+# Root is mounted by the initrd (root=PARTUUID=...); this entry only adds online growth.
+PARTLABEL=root-x86-64  /  ext4  defaults,x-systemd.growfs  0  0

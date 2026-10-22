@@ -14,5 +14,14 @@ check_sshd_hardening() {
       sudo sshd -T | grep -qx "allowusers agent"'
 }
 check_root_grown()        { vm 'test "$(df --output=size -BG / | tail -1 | tr -dc 0-9)" -ge 35'; }
-check_networkd_dhcp()     { vm 'networkctl status >/dev/null && getent hosts deb.debian.org >/dev/null'; }
+check_networkd_dhcp()     { vm 'networkctl status >/dev/null && for i in $(seq 1 10); do getent hosts deb.debian.org >/dev/null && exit 0; sleep 2; done; exit 1'; }
+check_libpam_systemd()    { vm 'dpkg -s libpam-systemd >/dev/null'; }
+check_no_bashrc_backup()  { vm 'test -z "$(ls -A ~ | grep "^\.bashrc\.bak")"'; }
 check_sudoers_mode()      { vm 'sudo stat -c %a /etc/sudoers.d/agent | grep -qx 440'; }
+
+# No cloud-init seed: cloud-init stays disabled, so only systemd-repart + growfs can have grown root.
+noseed_cloud_init_disabled() { qga 'cloud-init status' | grep -q disabled; }
+noseed_root_grown() {
+  local g; g=$(qga 'df --output=size -BG / | tail -1 | tr -dc 0-9')
+  echo "root size: ${g}G (want >= 35)"; [ "$g" -ge 35 ]
+}
