@@ -19,7 +19,8 @@ cmd_get() {
   env_get "$AGENTOS_ENV" "$1"
 }
 cmd_add_ssh_key() {
-  [[ $1 =~ ^(ssh-(ed25519|rsa)|ecdsa-sha2-nistp(256|384|521)|sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh\.com)\ [A-Za-z0-9+/=]+ ]] \
+  [[ $1 != *$'\n'* && $1 != *$'\r'* ]] || { echo "SSH key must be a single line" >&2; exit 2; }
+  [[ $1 =~ ^(ssh-(ed25519|rsa)|ecdsa-sha2-nistp(256|384|521)|sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh\.com)\ [A-Za-z0-9+/=]+(\ [^[:cntrl:]]*)?$ ]] \
     || { echo "not an SSH public key" >&2; exit 2; }
   install -d -o agent -g agent -m 700 /home/agent/.ssh
   touch "$AK"; grep -qxF "$1" "$AK" || printf '%s\n' "$1" >> "$AK"

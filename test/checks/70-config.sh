@@ -15,6 +15,7 @@ check_add_ssh_key() {
       sudo agentos-config add-ssh-key "$k" && test "$(grep -cF "$k" ~/.ssh/authorized_keys)" = 1'
 }
 check_mcp_token_shown() { vm 'test "$(sudo agentos-config show-mcp-token)" = "$(sudo cat /etc/agentos/mcp-token)"'; }
+check_add_ssh_key_rejects_multiline() { vm '! sudo agentos-config add-ssh-key "$(printf "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyForTestOnly0000000000000000000000 a\ncommand=\"x\" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyForTestOnly0000000000000000000000 b")" 2>/dev/null && ! grep -q "command=" ~/.ssh/authorized_keys'; }
 check_no_autologin_when_key_present() {
   vm 'sudo agentos-console-apply && test ! -e /etc/systemd/system/getty@tty1.service.d/agentos.conf'
 }
