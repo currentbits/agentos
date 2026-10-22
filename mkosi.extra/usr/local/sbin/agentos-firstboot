@@ -19,8 +19,9 @@ fi
 # 3. Secrets -> agent-owned file
 install -d -o agent -g agent -m 700 /home/agent/.config /home/agent/.config/agentos
 [ -f "$AGENTOS_SECRETS" ] || install -o agent -g agent -m 600 /dev/null "$AGENTOS_SECRETS"
-while IFS='=' read -r k v; do
-  [ -n "$k" ] && is_secret_key "$k" || continue
+while IFS= read -r line; do
+  k=${line%%=*}; v=${line#*=}   # not IFS='=': read would drop a trailing "=" (base64 padding)
+  is_secret_key "$k" || continue
   env_set "$AGENTOS_SECRETS" "$k" "$v"
   env_unset "$AGENTOS_ENV" "$k"
 done < <(grep -E '^[A-Z0-9_]+=' "$AGENTOS_ENV" || true)
@@ -36,17 +37,23 @@ fi
 # 4b. Re-apply firewall (env may have changed)
 /usr/local/sbin/agentos-firewall
 
-# 4c. Console: lockout prevention (re-evaluated after Tailscale by agentos-config-tty / next boot)
-/usr/local/sbin/agentos-console-apply
-
 # agentos.env is root-only, so publish the console mode to a world-readable file.
 printf 'AGENTOS_CONSOLE=%s\n' "$(env_get "$AGENTOS_ENV" AGENTOS_CONSOLE | grep -x terminal || echo headless)" > /etc/agentos/console.mode
 chmod 644 /etc/agentos/console.mode
 chmod 711 /etc/agentos
 
-# 5. Tailscale last: a bad key must not block the steps above. Failure -> unit fails, retried next boot.
+# 5. Tailscale late: a bad key must not block the steps above. Failure -> unit fails, retried next boot.
+ts_rc=0
 k=$(env_get "$AGENTOS_ENV" TS_AUTHKEY)
 if [ -n "$k" ]; then
-  tailscale up --auth-key="$k" --hostname="$(hostname)" --ssh
-  env_unset "$AGENTOS_ENV" TS_AUTHKEY
+  if tailscale up --auth-key="$k" --hostname="$(hostname)" --ssh; then
+    env_unset "$AGENTOS_ENV" TS_AUTHKEY
+  else
+    ts_rc=$?
+  fi
 fi
+
+# 6. Console lockout prevention last, so it sees Tailscale. It restarts getty@tty1, which is
+# safe because this runs as its own unit (agentos-config apply restarts the unit).
+/usr/local/sbin/agentos-console-apply
+exit "$ts_rc"

@@ -19,3 +19,12 @@ env_get "$f" 'BAD.KEY' >/dev/null 2>&1 && { echo "env_get accepted invalid key" 
 is_secret_key ANTHROPIC_API_KEY; is_secret_key CLAUDE_CODE_OAUTH_TOKEN; is_secret_key GEMINI_API_KEY
 ! is_secret_key TS_AUTHKEY; ! is_secret_key AGENTOS_LAN_SSH
 echo "env.sh OK"
+
+# profile.d secrets parsing: values ending in "=" (a single trailing "=" is what `IFS== read` drops) and a last line without newline
+h=$(mktemp -d); trap 'rm -rf "$f" "$h"' EXIT
+mkdir -p "$h/.config/agentos"; printf 'PAD_TOKEN=abc==\nPAD1_TOKEN=abc=\nNOEOL_TOKEN=x' > "$h/.config/agentos/secrets.env"
+for sh in sh bash; do  # dash and bash split "read" fields differently; the agent's login shell is bash
+  got=$(HOME=$h $sh -c '. "$1"; printf "%s|%s|%s" "$PAD_TOKEN" "$PAD1_TOKEN" "$NOEOL_TOKEN"' sh "$(dirname "$0")/../mkosi.extra/etc/profile.d/agentos.sh")
+  [ "$got" = 'abc==|abc=|x' ] || { echo "profile.d parse ($sh): got '$got'" >&2; exit 1; }
+done
+echo "profile.d OK"

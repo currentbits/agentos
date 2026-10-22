@@ -32,7 +32,9 @@ cmd_github_keys() {
   [ -n "$keys" ] || { echo "no public keys for GitHub user $1" >&2; exit 1; }
   while IFS= read -r k; do cmd_add_ssh_key "$k"; done <<< "$keys"
 }
-cmd_apply() { /usr/local/sbin/agentos-firstboot; }
+# Run as its own unit: firstboot ends with agentos-console-apply, which restarts getty@tty1 and
+# would kill a menu running there (agentos-config-tty) if firstboot ran inside it.
+cmd_apply() { systemctl restart agentos-firstboot.service; }
 
 menu() {
   while true; do
@@ -51,9 +53,14 @@ menu() {
       done      "Apply and exit" 3>&1 1>&2 2>&3) || c=done
     case $c in
       password)  passwd agent || true ;;
-      sshkey)    k=$(whiptail --inputbox "Paste SSH public key" 10 72 3>&1 1>&2 2>&3) && cmd_add_ssh_key "$k" || true ;;
-      github)    u=$(whiptail --inputbox "GitHub username" 10 60 3>&1 1>&2 2>&3) && cmd_github_keys "$u" || true ;;
-      tailscale) whiptail --msgbox "Use a TAGGED, pre-approved auth key (tag:agentos) so this machine cannot reach your other devices. See docs/tailscale-acl.md." 12 72
+      # cmd_* use `exit` on bad input: run them in a subshell so a failure returns to the menu.
+      sshkey)    if k=$(whiptail --inputbox "Paste SSH public key" 10 72 3>&1 1>&2 2>&3); then
+                   err=$( (cmd_add_ssh_key "$k") 2>&1) || whiptail --msgbox "SSH key not added: $err" 10 72
+                 fi ;;
+      github)    if u=$(whiptail --inputbox "GitHub username" 10 60 3>&1 1>&2 2>&3); then
+                   err=$( (cmd_github_keys "$u") 2>&1) || whiptail --msgbox "GitHub keys not imported: $err" 10 72
+                 fi ;;
+      tailscale) whiptail --msgbox "Use a SINGLE-USE, pre-approved auth key tagged tag:agentos.\n\nTagged: this machine cannot reach your other devices. Single-use: the key may stay readable afterwards (e.g. in cloud user-data), so it must be worthless once used. See docs/tailscale-acl.md." 14 72
                  k=$(whiptail --passwordbox "Tailscale auth key (tskey-auth-...)" 10 72 3>&1 1>&2 2>&3) && [ -n "$k" ] && cmd_set TS_AUTHKEY "$k" || true ;;
       apikeys)   whiptail --msgbox "Use a dedicated, spend-capped key per AgentOS machine: a hijacked agent can read any key stored here." 10 72
                  for n in ANTHROPIC_API_KEY OPENAI_API_KEY GROK_CODE_XAI_API_KEY CLAUDE_CODE_OAUTH_TOKEN; do

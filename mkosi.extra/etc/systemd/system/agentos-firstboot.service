@@ -1,6 +1,8 @@
 [Unit]
 Description=AgentOS: apply /etc/agentos/agentos.env
-After=cloud-init.service network-online.target tailscaled.service
+# cloud-config.target: datasource + user-data (write_files agentos.env) are in place.
+# (trixie cloud-init 25.1 has no cloud-init.service; it was split into -main/-network.)
+After=cloud-config.target network-online.target tailscaled.service
 Wants=network-online.target
 
 [Service]

@@ -1,4 +1,12 @@
 # shellcheck shell=bash
+check_firstboot_ordering() {
+  vm 'a=$(systemctl show -p After --value agentos-firstboot); for u in cloud-config.target network-online.target tailscaled.service; do
+        echo " $a " | grep -q " $u " || { echo "missing After=$u"; exit 1; }; done'
+}
+check_pad_token_survives() {  # values ending in "=" must survive the agentos.env -> secrets.env move
+  vm 'grep -qx "PAD_TOKEN=abc==" ~/.config/agentos/secrets.env && grep -qx "PAD1_TOKEN=abc=" ~/.config/agentos/secrets.env' &&
+    vml 'test "$PAD_TOKEN" = "abc==" && test "$PAD1_TOKEN" = "abc="'
+}
 check_firstboot_succeeded() { vm 'systemctl is-active agentos-firstboot.service'; }
 check_hostname_applied()    { vm 'test "$(hostname)" = agentos-test'; }
 check_env_mode()            { vm 'test "$(sudo stat -c %a /etc/agentos/agentos.env)" = 600'; }

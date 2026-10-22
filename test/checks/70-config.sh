@@ -25,7 +25,12 @@ check_autologin_when_no_access() {
       mv ~/.ssh/ak.bak ~/.ssh/authorized_keys; sudo agentos-console-apply
       test ! -e /etc/systemd/system/getty@tty1.service.d/agentos.conf && exit $r'
 }
-check_terminal_mode_profile() { vm 'grep -q "cage -- foot" /etc/profile.d/agentos.sh && command -v cage && command -v foot'; }
+check_terminal_mode_profile() { vm 'grep -q "cage -- foot" /etc/profile.d/agentos.sh && ! grep -q "exec cage" /etc/profile.d/agentos.sh && command -v cage && command -v foot'; }
+check_config_apply_restarts_unit() {  # apply must run firstboot as its unit, not inside the caller (getty@tty1)
+  vm 't0=$(systemctl show -p ActiveEnterTimestampMonotonic --value agentos-firstboot)
+      sudo agentos-config apply &&
+      test "$(systemctl show -p ActiveEnterTimestampMonotonic --value agentos-firstboot)" != "$t0"'
+}
 check_issue_banner()          { vm 'grep -q "agentos-config" /etc/issue'; }
 
 # Automated stand-in for the brief's manual Step 5 (no attached display in the smoke harness,
