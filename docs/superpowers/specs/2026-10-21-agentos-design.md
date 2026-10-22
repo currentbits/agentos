@@ -268,7 +268,7 @@ The MCP server additionally carries an `assert`-based self-check of the coordina
 
 Every install and every VM from the same image must not share identity:
 - `/etc/machine-id` empty in the image (mkosi default) → generated at first boot.
-- SSH host keys removed at build (`RemoveFiles=/etc/ssh/ssh_host_*`); `agentos-firstboot` runs `ssh-keygen -A` before sshd starts.
+- SSH host keys removed at build (`RemoveFiles=/etc/ssh/ssh_host_*`); `agentos-ssh-keygen.service` runs `ssh-keygen -A` before sshd starts when no host key exists.
 - No Tailscale state in the image (`/var/lib/tailscale` empty); systemd random seed not shipped.
 - No CLI login state in the image: CI asserts `~agent/.claude*`, `~agent/.codex/auth.json`, grok and opencode auth files don't exist.
 
