@@ -1,0 +1,7 @@
+enable systemd-networkd.service
+enable systemd-resolved.service
+enable ssh.service
+enable cloud-*.service
+enable qemu-guest-agent.service
+enable agentos-*.service
+disable nftables.service

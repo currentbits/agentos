@@ -1,0 +1,6 @@
+#!/bin/bash
+# Runs inside the image after apt packages are installed. Has network access.
+set -euo pipefail
+[ "${1:-final}" = final ] || exit 0
+
+id agent >/dev/null 2>&1 || useradd --create-home --uid 1000 --shell /bin/bash --groups sudo agent
