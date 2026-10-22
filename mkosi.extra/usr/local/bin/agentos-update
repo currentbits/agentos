@@ -1,6 +1,6 @@
 #!/bin/bash
 # Update OS packages and every agent CLI/toolchain. Manual by design: never mid-task.
-set -uo pipefail
+set -euo pipefail
 [ "$(id -un)" = agent ] || { echo "run as the agent user" >&2; exit 2; }
 # shellcheck source=/dev/null
 . /etc/profile.d/agentos.sh
@@ -16,7 +16,7 @@ step "apt"      sudo bash -c 'apt-get update -qq && DEBIAN_FRONTEND=noninteracti
 step "claude"   claude update
 step "codex"    npm install -g @openai/codex@latest
 step "opencode" opencode upgrade
-step "grok"     bash -c 'grok update 2>/dev/null || curl -fsSL https://x.ai/cli/install.sh | bash'
+step "grok"     bash -c 'set -o pipefail; grok update 2>/dev/null || curl -fsSL https://x.ai/cli/install.sh | bash'
 step "rustup"   rustup update
 step "bun"      bun upgrade
 step "playwright" bash -c 'npm install -g playwright@latest && playwright install chromium'
