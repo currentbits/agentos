@@ -59,12 +59,15 @@ done
       echo "  - $sf  ->  ${sf}.part00, ${sf}.part01, ..."
     done
     echo
-    echo "Reassemble before use, e.g.:"
-    echo "  cat ${split_files[0]}.part* > ${split_files[0]}"
+    echo "Reassemble before use:"
+    for sf in "${split_files[@]}"; do
+      echo "  cat ${sf}.part* > ${sf}"
+    done
     echo
   fi
-  echo "Then verify against the whole-file checksums:"
-  echo "  sha256sum -c SHA256SUMS"
+  echo "Then verify what you downloaded against the whole-file checksums"
+  echo "(--ignore-missing skips the formats you did not download):"
+  echo "  sha256sum -c --ignore-missing SHA256SUMS"
   echo
   echo "SHA256SUMS.parts (if present) checksums the individual .partNN files,"
   echo "for verifying a partial download before reassembly."
