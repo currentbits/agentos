@@ -1,0 +1,81 @@
+#!/bin/bash
+# AgentOS configuration: whiptail menu (no args) or scriptable subcommands.
+set -euo pipefail
+[ "$(id -u)" = 0 ] || exec sudo "$0" "$@"
+. /usr/local/lib/agentos/env.sh
+
+AK=/home/agent/.ssh/authorized_keys
+
+cmd_set() {
+  if is_secret_key "$1"; then
+    install -d -o agent -g agent -m 700 /home/agent/.config/agentos
+    env_set "$AGENTOS_SECRETS" "$1" "$2"; chown agent:agent "$AGENTOS_SECRETS"; chmod 600 "$AGENTOS_SECRETS"
+  else
+    env_set "$AGENTOS_ENV" "$1" "$2"
+  fi
+}
+cmd_get() {
+  is_secret_key "$1" && { echo "refusing to print secret $1" >&2; exit 3; }
+  env_get "$AGENTOS_ENV" "$1"
+}
+cmd_add_ssh_key() {
+  [[ $1 =~ ^(ssh-(ed25519|rsa)|ecdsa-sha2-nistp(256|384|521)|sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh\.com)\ [A-Za-z0-9+/=]+ ]] \
+    || { echo "not an SSH public key" >&2; exit 2; }
+  install -d -o agent -g agent -m 700 /home/agent/.ssh
+  touch "$AK"; grep -qxF "$1" "$AK" || printf '%s\n' "$1" >> "$AK"
+  chown agent:agent "$AK"; chmod 600 "$AK"
+}
+cmd_github_keys() {
+  [[ $1 =~ ^[A-Za-z0-9-]{1,39}$ ]] || { echo "invalid GitHub username" >&2; exit 2; }
+  local keys; keys=$(curl -fsS --max-time 15 "https://github.com/$1.keys")
+  [ -n "$keys" ] || { echo "no public keys for GitHub user $1" >&2; exit 1; }
+  while IFS= read -r k; do cmd_add_ssh_key "$k"; done <<< "$keys"
+}
+cmd_apply() { /usr/local/sbin/agentos-firstboot; }
+
+menu() {
+  while true; do
+    local c
+    c=$(whiptail --title "AgentOS configuration" --menu "Choose a setting" 22 72 12 \
+      password  "Set password for 'agent' (console + sudo)" \
+      sshkey    "Add an SSH public key" \
+      github    "Import SSH keys from a GitHub username" \
+      tailscale "Tailscale auth key" \
+      apikeys   "API keys / OAuth token" \
+      lanssh    "Allow SSH from LAN (no Tailscale)" \
+      console   "Local console: headless or terminal" \
+      reboot    "Auto-reboot for kernel security updates" \
+      mcptoken  "Show MCP HTTP bearer token" \
+      done      "Apply and exit" 3>&1 1>&2 2>&3) || c=done
+    case $c in
+      password)  passwd agent || true ;;
+      sshkey)    k=$(whiptail --inputbox "Paste SSH public key" 10 72 3>&1 1>&2 2>&3) && cmd_add_ssh_key "$k" || true ;;
+      github)    u=$(whiptail --inputbox "GitHub username" 10 60 3>&1 1>&2 2>&3) && cmd_github_keys "$u" || true ;;
+      tailscale) whiptail --msgbox "Use a TAGGED, pre-approved auth key (tag:agentos) so this machine cannot reach your other devices. See docs/tailscale-acl.md." 12 72
+                 k=$(whiptail --passwordbox "Tailscale auth key (tskey-auth-...)" 10 72 3>&1 1>&2 2>&3) && [ -n "$k" ] && cmd_set TS_AUTHKEY "$k" || true ;;
+      apikeys)   whiptail --msgbox "Use a dedicated, spend-capped key per AgentOS machine: a hijacked agent can read any key stored here." 10 72
+                 for n in ANTHROPIC_API_KEY OPENAI_API_KEY GROK_CODE_XAI_API_KEY CLAUDE_CODE_OAUTH_TOKEN; do
+                   v=$(whiptail --passwordbox "$n (empty = keep current)" 10 72 3>&1 1>&2 2>&3) || break
+                   [ -n "$v" ] && cmd_set "$n" "$v"
+                 done ;;
+      lanssh)    if whiptail --yesno "Open SSH (key-only) on all interfaces?" 8 60; then cmd_set AGENTOS_LAN_SSH 1; else cmd_set AGENTOS_LAN_SSH 0; fi ;;
+      console)   m=$(whiptail --menu "Local console mode" 12 60 2 headless "Status + login prompt" terminal "Full-screen terminal after login" 3>&1 1>&2 2>&3) && cmd_set AGENTOS_CONSOLE "$m" || true ;;
+      reboot)    if whiptail --yesno "Reboot automatically at 04:00 when a kernel update requires it?" 8 70; then cmd_set AGENTOS_AUTO_REBOOT 1; else cmd_set AGENTOS_AUTO_REBOOT 0; fi ;;
+      mcptoken)  whiptail --msgbox "$(cat /etc/agentos/mcp-token)" 8 72 ;;
+      done)      cmd_apply || whiptail --msgbox "Some settings failed to apply (see: journalctl -u agentos-firstboot). Tailscale key wrong?" 9 72
+                 return ;;
+    esac
+  done
+}
+
+case "${1:-}" in
+  "")              menu ;;
+  set)             [ $# -eq 3 ] || { echo "usage: agentos-config set KEY VALUE" >&2; exit 2; }; cmd_set "$2" "$3" ;;
+  get)             [ $# -eq 2 ] || { echo "usage: agentos-config get KEY" >&2; exit 2; }; cmd_get "$2" ;;
+  add-ssh-key)     cmd_add_ssh_key "${2:?usage: agentos-config add-ssh-key '<pubkey>'}" ;;
+  github-keys)     cmd_github_keys "${2:?usage: agentos-config github-keys <user>}" ;;
+  password)        passwd agent ;;
+  apply)           cmd_apply ;;
+  show-mcp-token)  cat /etc/agentos/mcp-token ;;
+  *)               echo "usage: agentos-config [set KEY VALUE|get KEY|add-ssh-key KEY|github-keys USER|password|apply|show-mcp-token]" >&2; exit 2 ;;
+esac

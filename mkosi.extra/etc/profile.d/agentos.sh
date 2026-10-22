@@ -14,3 +14,9 @@ if [ -r "$HOME/.config/agentos/secrets.env" ]; then
   done < "$HOME/.config/agentos/secrets.env"
   unset _ag_k _ag_v
 fi
+
+# AgentOS: terminal console mode — full-screen terminal on tty1 after login.
+if [ "$(tty 2>/dev/null)" = /dev/tty1 ] && [ "$(id -un)" = agent ] && [ -z "${WAYLAND_DISPLAY:-}" ] &&
+   grep -qx 'AGENTOS_CONSOLE=terminal' /etc/agentos/console.mode 2>/dev/null; then
+  exec cage -- foot -e tmux new -A -s main
+fi

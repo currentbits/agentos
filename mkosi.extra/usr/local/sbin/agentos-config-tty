@@ -1,0 +1,10 @@
+#!/bin/bash
+# tty1 login program while no access method is configured: run the config menu, never a shell.
+set -euo pipefail
+export TERM=linux
+clear
+echo "AgentOS has no way to log in yet (no password, SSH key, or Tailscale)."
+echo "Configure access now. This screen returns until one is set."
+sleep 2
+/usr/local/bin/agentos-config || true
+/usr/local/sbin/agentos-console-apply

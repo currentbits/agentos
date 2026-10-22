@@ -3,7 +3,7 @@
 set -euo pipefail
 . /usr/local/lib/agentos/env.sh
 
-install -d -m 700 /etc/agentos
+install -d -m 711 /etc/agentos
 [ -f "$AGENTOS_ENV" ] || install -m 600 /dev/null "$AGENTOS_ENV"
 chmod 600 "$AGENTOS_ENV"
 
@@ -35,6 +35,14 @@ fi
 
 # 4b. Re-apply firewall (env may have changed)
 /usr/local/sbin/agentos-firewall
+
+# 4c. Console: lockout prevention (re-evaluated after Tailscale by agentos-config-tty / next boot)
+/usr/local/sbin/agentos-console-apply
+
+# agentos.env is root-only, so publish the console mode to a world-readable file.
+printf 'AGENTOS_CONSOLE=%s\n' "$(env_get "$AGENTOS_ENV" AGENTOS_CONSOLE | grep -x terminal || echo headless)" > /etc/agentos/console.mode
+chmod 644 /etc/agentos/console.mode
+chmod 711 /etc/agentos
 
 # 5. Tailscale last: a bad key must not block the steps above. Failure -> unit fails, retried next boot.
 k=$(env_get "$AGENTOS_ENV" TS_AUTHKEY)
