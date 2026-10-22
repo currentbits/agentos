@@ -1,0 +1,41 @@
+#!/bin/bash
+# Apply /etc/agentos/agentos.env. Idempotent; runs every boot and after agentos-config changes.
+set -euo pipefail
+. /usr/local/lib/agentos/env.sh
+
+install -d -m 700 /etc/agentos
+[ -f "$AGENTOS_ENV" ] || install -m 600 /dev/null "$AGENTOS_ENV"
+chmod 600 "$AGENTOS_ENV"
+
+# 1. Hostname
+h=$(env_get "$AGENTOS_ENV" AGENTOS_HOSTNAME)
+[ -n "$h" ] && [ "$(hostname)" != "$h" ] && hostnamectl set-hostname "$h"
+
+# 2. MCP bearer token (consumed by Plan 2)
+if [ ! -s /etc/agentos/mcp-token ]; then
+  (umask 077; head -c 32 /dev/urandom | base64 | tr -d '/+=\n' > /etc/agentos/mcp-token)
+fi
+
+# 3. Secrets -> agent-owned file
+install -d -o agent -g agent -m 700 /home/agent/.config /home/agent/.config/agentos
+[ -f "$AGENTOS_SECRETS" ] || install -o agent -g agent -m 600 /dev/null "$AGENTOS_SECRETS"
+while IFS='=' read -r k v; do
+  [ -n "$k" ] && is_secret_key "$k" || continue
+  env_set "$AGENTOS_SECRETS" "$k" "$v"
+  env_unset "$AGENTOS_ENV" "$k"
+done < <(grep -E '^[A-Z0-9_]+=' "$AGENTOS_ENV" || true)
+chown agent:agent "$AGENTOS_SECRETS"; chmod 600 "$AGENTOS_SECRETS"
+
+# 4. Auto-reboot preference for unattended-upgrades
+if [ "$(env_get "$AGENTOS_ENV" AGENTOS_AUTO_REBOOT)" = 0 ]; then
+  echo 'Unattended-Upgrade::Automatic-Reboot "false";' > /etc/apt/apt.conf.d/53agentos-noreboot
+else
+  rm -f /etc/apt/apt.conf.d/53agentos-noreboot
+fi
+
+# 5. Tailscale last: a bad key must not block the steps above. Failure -> unit fails, retried next boot.
+k=$(env_get "$AGENTOS_ENV" TS_AUTHKEY)
+if [ -n "$k" ]; then
+  tailscale up --auth-key="$k" --hostname="$(hostname)" --ssh
+  env_unset "$AGENTOS_ENV" TS_AUTHKEY
+fi

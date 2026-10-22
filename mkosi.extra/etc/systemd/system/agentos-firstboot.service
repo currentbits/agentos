@@ -1,0 +1,13 @@
+[Unit]
+Description=AgentOS: apply /etc/agentos/agentos.env
+After=cloud-init.service network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/agentos-firstboot
+StandardOutput=journal+console
+
+[Install]
+WantedBy=multi-user.target

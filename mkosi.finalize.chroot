@@ -20,7 +20,8 @@ dpkg-query -W -f '${Package} ${Version}\n' > /var/lib/agentos-manifest.txt
   echo "# agent CLIs"
   for c in claude codex opencode grok; do
     p=$(runuser -u agent -- bash -lc "readlink -f \"\$(command -v $c)\"")
-    v=$(runuser -u agent -- bash -lc "$c --version 2>/dev/null | head -1")
+    v=$(runuser -u agent -- bash -lc "set -o pipefail; $c --version 2>/dev/null | head -1")
+    [ -n "$v" ] || fail "no --version output for $c"
     echo "$c ${v// /_} $(sha256sum "$p" | cut -d' ' -f1)"
   done
 } >> /var/lib/agentos-manifest.txt
