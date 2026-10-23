@@ -3,6 +3,7 @@
 set -euo pipefail
 
 chmod 0440 /etc/sudoers.d/agent
+chown -R agent:agent /home/agent/.config/xfce4
 
 # dpkg's path-exclude for /usr/share/locale/* (mkosi.skeleton/etc/dpkg/dpkg.cfg.d/01-agentos-nodoc)
 # does not take effect for every package that ships locale catalogs (verified: man/doc/info

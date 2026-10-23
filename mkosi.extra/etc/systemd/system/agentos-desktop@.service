@@ -1,0 +1,11 @@
+[Unit]
+Description=AgentOS desktop %i (Xvnc :%i + XFCE)
+After=network.target
+
+[Service]
+Type=simple
+User=agent
+WorkingDirectory=/home/agent
+ExecStart=/usr/local/lib/agentos/desktop-session %i
+KillMode=control-group
+Restart=no

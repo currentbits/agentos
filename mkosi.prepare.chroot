@@ -37,3 +37,8 @@ chown agent:agent /home/agent/.bashrc /home/agent/.profile
 for c in claude codex opencode grok; do
   as_agent "command -v $c >/dev/null" || { echo "agent CLI '$c' not on PATH after install" >&2; exit 1; }
 done
+
+# XFCE: ship the default panel config so the first start shows no "Panel: use default config?" dialog.
+install -d -o agent -g agent /home/agent/.config/xfce4/xfconf/xfce-perchannel-xml
+install -o agent -g agent -m 644 /etc/xdg/xfce4/panel/default.xml \
+  /home/agent/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml
