@@ -1,0 +1,32 @@
+#!/bin/bash
+# Register the agentos-computer MCP server with every agent CLI. Idempotent, runs as agent at
+# every boot (from agentos-firstboot), never edits other entries. Done at boot, not build time,
+# so no CLI state is baked into the image.
+set -euo pipefail
+NAME=agentos-computer
+CMD=/usr/local/bin/agentos-computer
+rc=0
+
+# Claude Code (user scope, ~/.claude.json)
+if ! claude mcp get "$NAME" >/dev/null 2>&1; then
+  claude mcp add --scope user "$NAME" -- "$CMD" >/dev/null || { echo "claude: registration failed" >&2; rc=1; }
+fi
+
+# Codex and Grok share the TOML shape
+for f in "$HOME/.codex/config.toml" "$HOME/.grok/config.toml"; do
+  mkdir -p "$(dirname "$f")"; touch "$f"
+  grep -q "^\[mcp_servers\.$NAME\]" "$f" || printf '\n[mcp_servers.%s]\ncommand = "%s"\n' "$NAME" "$CMD" >> "$f"
+done
+grep -q '^\[mcp\]' "$HOME/.grok/config.toml" || printf '\n[mcp]\nmax_output_bytes = 4000000\n' >> "$HOME/.grok/config.toml"
+
+# opencode (JSON)
+f=$HOME/.config/opencode/opencode.json
+mkdir -p "$(dirname "$f")"
+[ -s "$f" ] || printf '{"$schema":"https://opencode.ai/config.json"}\n' > "$f"
+tmp=$(mktemp "$f.XXXXXX")
+if jq --arg n "$NAME" --arg c "$CMD" '.mcp[$n] //= {type: "local", command: [$c], enabled: true}' "$f" > "$tmp"; then
+  mv "$tmp" "$f"
+else
+  rm -f "$tmp"; echo "opencode: $f is not valid JSON, left untouched" >&2; rc=1
+fi
+exit "$rc"

@@ -49,6 +49,11 @@ chmod 644 /etc/agentos/desktop.conf
 
 chmod 711 /etc/agentos
 
+# 4d. Register the computer-use MCP server with the agent CLIs (warn only: never block boot on it).
+runuser -u agent -- env -i HOME=/home/agent USER=agent \
+  PATH=/home/agent/.local/bin:/home/agent/.cargo/bin:/home/agent/.bun/bin:/home/agent/.opencode/bin:/home/agent/.grok/bin:/usr/local/bin:/usr/bin:/bin \
+  /usr/local/lib/agentos/register-mcp || echo "warning: agentos-computer MCP registration incomplete" >&2
+
 # 5. Tailscale late: a bad key must not block the steps above. Failure -> unit fails, retried next boot.
 ts_rc=0
 k=$(env_get "$AGENTOS_ENV" TS_AUTHKEY)
