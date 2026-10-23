@@ -42,6 +42,7 @@ jobs:
             mkosi.extra/usr/local/bin/* mkosi.extra/usr/local/sbin/* mkosi.extra/usr/local/lib/agentos/*.sh \
             mkosi.extra/etc/profile.d/agentos.sh
           test/env_test.sh
+          python3 test/computer_test.py
 
       - name: Build image
         run: mkosi -f build

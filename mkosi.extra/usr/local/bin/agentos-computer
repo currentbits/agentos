@@ -1,0 +1,4 @@
+#!/bin/bash
+# AgentOS computer-use MCP server. stdio by default; --http HOST:PORT for the tailnet service.
+set -euo pipefail
+exec /usr/local/lib/agentos/venv/bin/python /usr/local/lib/agentos/computer/server.py "$@"

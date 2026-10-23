@@ -28,6 +28,7 @@ vhome=$(runuser -u agent -- mktemp -d)
     echo "$c ${v// /_} $(sha256sum "$p" | cut -d' ' -f1)"
   done
 } >> /var/lib/agentos-manifest.txt
+{ echo "# agentos-computer python"; /usr/local/lib/agentos/venv/bin/pip freeze --disable-pip-version-check; } >> /var/lib/agentos-manifest.txt
 rm -rf "$vhome"
 
 # Invariants last, after everything above that could have written state.
