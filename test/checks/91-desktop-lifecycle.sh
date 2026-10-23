@@ -7,6 +7,20 @@ check_agent_manages_desktop_without_sudo() {
 check_agent_cannot_manage_other_units() {
   vm '! systemctl --no-ask-password start systemd-tmpfiles-clean.service 2>/dev/null'
 }
+check_desktop_number_bounds() {
+  vm 'systemctl --no-ask-password start agentos-desktop@1.service' && wait_x 1 &&
+  vm 'before=$(stat -c %Y /tmp/.X1-lock) &&
+      for u in agentos-desktop@0.service agentos-desktop@01.service agentos-desktop@17.service; do
+        ! systemctl --no-ask-password start "$u" 2>/dev/null || { echo "$u should have been rejected"; exit 1; }
+      done &&
+      test "$(stat -c %Y /tmp/.X1-lock)" = "$before"' &&
+  vm 'systemctl --no-ask-password stop agentos-desktop@1.service'
+}
+check_desktop_oom_priority() {
+  vm 'systemctl --no-ask-password start agentos-desktop@8.service' && wait_x 8 &&
+  vm 'test "$(systemctl show agentos-desktop@8 -p OOMScoreAdjust --value)" = 500' &&
+  vm 'systemctl --no-ask-password stop agentos-desktop@8.service'
+}
 check_vnc_token_lifecycle() {
   vm 'systemctl --no-ask-password start agentos-desktop@6.service && sleep 2 &&
       grep -qE "^[0-9a-f]{32}: localhost:5906$" /run/agentos/vnc/6 &&

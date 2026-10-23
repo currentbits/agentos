@@ -3,7 +3,7 @@ polkit.addRule(function (action, subject) {
   if (action.id === "org.freedesktop.systemd1.manage-units" && subject.user === "agent") {
     var unit = action.lookup("unit");
     var verb = action.lookup("verb");
-    if (unit && /^agentos-desktop@[0-9]+\.service$/.test(unit) &&
+    if (unit && /^agentos-desktop@([1-9]|1[0-6])\.service$/.test(unit) &&
         (verb === "start" || verb === "stop" || verb === "restart")) {
       return polkit.Result.YES;
     }

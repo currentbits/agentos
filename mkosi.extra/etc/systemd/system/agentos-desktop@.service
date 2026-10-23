@@ -11,3 +11,4 @@ ExecStartPost=+/usr/local/lib/agentos/vnc-token add %i
 ExecStopPost=+/usr/local/lib/agentos/vnc-token del %i
 KillMode=control-group
 Restart=no
+OOMScoreAdjust=500
