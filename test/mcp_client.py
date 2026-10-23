@@ -86,11 +86,13 @@ async def scenario(s):
     await call(s, "scroll", desktop=n, x=683, y=384, direction="down", amount=2)
     await call(s, "key", desktop=n, combo="Escape")
     await call(s, "type", desktop=n, text="hello agentos")
+    await call(s, "type", desktop=n, text="x" * 2600)  # long type: run()'s timeout scales with length
 
     # invalid input is a tool error, not a crash
     for name, args in [("key", {"desktop": n, "combo": "a;rm -rf /"}),
                        ("click", {"desktop": n, "x": 1, "y": 1, "button": "nope"}),
-                       ("screenshot", {"desktop": 99})]:
+                       ("screenshot", {"desktop": 99}),
+                       ("type", {"desktop": n, "text": "x" * 10001})]:
         r = await s.call_tool(name, args)
         if not r.isError:
             fail(f"{name}({args}) should have been rejected")

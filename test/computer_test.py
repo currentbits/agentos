@@ -45,4 +45,10 @@ for bad in ["", "ctrl++", "+a", "a;rm -rf", "ctrl alt", "--help", "a\nb"]:
 
 assert core.BUTTONS == {"left": "1", "middle": "2", "right": "3"}
 assert core.SCROLL == {"up": "4", "down": "5", "left": "6", "right": "7"}
+
+# tailnet host, for Plan 3 view URLs
+assert core.tailnet_host('{"Self": {"DNSName": "agentos-01.tailxyz.ts.net."}}') == "agentos-01.tailxyz.ts.net"
+assert core.tailnet_host('{"Self": {"DNSName": ""}}') is None
+assert core.tailnet_host('not json') is None
+assert core.tailnet_host('{"Peer": {}}') is None
 print("core OK")

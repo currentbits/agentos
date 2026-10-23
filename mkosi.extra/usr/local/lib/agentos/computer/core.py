@@ -1,4 +1,5 @@
 """Pure logic for agentos-computer: coordinate scaling, desktop bookkeeping, validation. No I/O."""
+import json
 import re
 
 SCREEN_W, SCREEN_H = 1920, 1080
@@ -51,3 +52,13 @@ def parse_conf(text, defaults):
 
 def valid_key_combo(combo):
     return bool(_KEY_RE.match(combo)) and "\n" not in combo
+
+
+def tailnet_host(status_json):
+    """Self.DNSName from `tailscale status --json`, trailing dot stripped. None if unavailable."""
+    try:
+        data = json.loads(status_json)
+    except ValueError:
+        return None
+    name = (data.get("Self") or {}).get("DNSName") or ""
+    return name.rstrip(".") or None

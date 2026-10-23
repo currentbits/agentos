@@ -23,7 +23,7 @@ CONF = "/etc/agentos/desktop.conf"
 TOKENS = "/run/agentos/vnc"
 LOCK = "/tmp/agentos-desktop.lock"
 
-mcp = FastMCP("agentos-computer", host="0.0.0.0")
+mcp = FastMCP("agentos-computer", host="0.0.0.0", log_level="WARNING", stateless_http=True)
 
 
 def conf():
@@ -46,12 +46,12 @@ def conf():
     return field("MAX_DESKTOPS", 8, 1, 16), field("SCREENSHOT_WIDTH", 1366, 640, 1920)
 
 
-def run(*args, display=None):
+def run(*args, display=None, timeout=30):
     env = dict(os.environ)
     if display is not None:
         env["DISPLAY"] = f":{display}"
     try:
-        r = subprocess.run(args, env=env, capture_output=True, text=True, timeout=30)
+        r = subprocess.run(args, env=env, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         raise RuntimeError(f"{args[0]} timed out")
     if r.returncode != 0:
@@ -69,11 +69,27 @@ def need(desktop):
         raise ValueError(f"desktop {desktop} is not running; call create_desktop first")
 
 
+_host_cache = {"host": None, "ts": 0.0}
+
+
+def host():
+    """Tailnet DNS name when Tailscale is up, else the plain hostname. Cached 60 s (view URLs
+    are built often; `tailscale status` is a subprocess call we don't need to repeat per-call)."""
+    now = time.time()
+    if now - _host_cache["ts"] > 60:
+        try:
+            h = core.tailnet_host(run("tailscale", "status", "--json"))
+        except RuntimeError:
+            h = None
+        _host_cache["host"], _host_cache["ts"] = h or socket.gethostname(), now
+    return _host_cache["host"]
+
+
 def info(n):
     for _ in range(50):
         try:
             token = core.parse_token_file(open(f"{TOKENS}/{n}").read())
-            return {"id": n, "view_url": core.view_url(socket.gethostname(), token)}
+            return {"id": n, "view_url": core.view_url(host(), token)}
         except FileNotFoundError:
             time.sleep(0.1)
     raise RuntimeError(f"no viewer token for desktop {n}")
@@ -166,16 +182,18 @@ def move(desktop: int, x: int, y: int) -> str:
 def drag(desktop: int, x1: int, y1: int, x2: int, y2: int) -> str:
     """Press the left button at (x1, y1), move to (x2, y2), release."""
     need(desktop)
-    run("xdotool", "mousemove", "--sync", *pt(x1, y1), "mousedown", "1",
+    run("xdotool", "mousemove", "--sync", *pt(x1, y1), "mousedown", "1", "sleep", "0.1",
         "mousemove", "--sync", *pt(x2, y2), "mouseup", "1", display=desktop)
     return "ok"
 
 
 @mcp.tool(name="type")
 def type_text(desktop: int, text: str) -> str:
-    """Type text into the focused window."""
+    """Type text into the focused window. Max 10000 characters."""
     need(desktop)
-    run("xdotool", "type", "--delay", "12", "--", text, display=desktop)
+    if len(text) > 10000:
+        raise ValueError("text too long: max 10000 characters")
+    run("xdotool", "type", "--delay", "12", "--", text, display=desktop, timeout=30 + len(text) * 0.03)
     return "ok"
 
 
