@@ -4,6 +4,7 @@ stdio by default (spawned by agent CLIs inside the box); --http HOST:PORT for th
 Screenshots are scaled to SCREENSHOT_WIDTH; every coordinate a tool takes or returns is in that space.
 """
 import fcntl
+import hmac
 import io
 import os
 import socket
@@ -31,22 +32,28 @@ def conf():
     except FileNotFoundError:
         text = ""
     c = core.parse_conf(text, {"MAX_DESKTOPS": "8", "SCREENSHOT_WIDTH": "1366"})
+
     # ponytail: a hand-edited desktop.conf shouldn't be able to cause a ZeroDivisionError or
-    # nonsense scaling; clamp to sane ranges and fall back to the defaults otherwise.
-    try:
-        max_n, width = int(c["MAX_DESKTOPS"]), int(c["SCREENSHOT_WIDTH"])
-    except ValueError:
-        return 8, 1366
-    if not 1 <= max_n <= 16 or not 640 <= width <= 1920:
-        return 8, 1366
-    return max_n, width
+    # nonsense scaling; clamp to sane ranges and fall back to the default, per field independently
+    # (a bad width must not also discard a good MAX_DESKTOPS, and vice versa).
+    def field(key, default, lo, hi):
+        try:
+            v = int(c[key])
+        except ValueError:
+            return default
+        return v if lo <= v <= hi else default
+
+    return field("MAX_DESKTOPS", 8, 1, 16), field("SCREENSHOT_WIDTH", 1366, 640, 1920)
 
 
 def run(*args, display=None):
     env = dict(os.environ)
     if display is not None:
         env["DISPLAY"] = f":{display}"
-    r = subprocess.run(args, env=env, capture_output=True, text=True)
+    try:
+        r = subprocess.run(args, env=env, capture_output=True, text=True, timeout=30)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"{args[0]} timed out")
     if r.returncode != 0:
         raise RuntimeError(f"{args[0]} failed: {r.stderr.strip() or r.returncode}")
     return r.stdout
@@ -204,11 +211,38 @@ def cursor_position(desktop: int) -> dict:
     return {"x": x, "y": y}
 
 
+class BearerAuth:
+    """ASGI wrapper: every HTTP request must carry Authorization: Bearer <token>. Lifespan passes through."""
+
+    def __init__(self, app, token):
+        self.app, self.expected = app, b"Bearer " + token
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            got = dict(scope["headers"]).get(b"authorization", b"")
+            if not hmac.compare_digest(got, self.expected):
+                await send({"type": "http.response.start", "status": 401,
+                            "headers": [(b"content-type", b"text/plain"), (b"www-authenticate", b"Bearer")]})
+                await send({"type": "http.response.body", "body": b"unauthorized\n"})
+                return
+        await self.app(scope, receive, send)
+
+
+def serve_http(hostport):
+    import uvicorn
+    host, _, port = hostport.rpartition(":")
+    path = os.path.join(os.environ.get("CREDENTIALS_DIRECTORY", "/etc/agentos"), "mcp-token")
+    token = open(path, "rb").read().strip()
+    if len(token) < 32:
+        sys.exit(f"MCP token in {path} missing or too short")
+    uvicorn.run(BearerAuth(mcp.streamable_http_app(), token), host=host, port=int(port), log_level="warning")
+
+
 def main():
-    if sys.argv[1:2] == ["--http"]:
-        print("--http not implemented yet", file=sys.stderr)
-        sys.exit(2)
-    mcp.run()
+    if sys.argv[1:2] == ["--http"] and len(sys.argv) == 3:
+        serve_http(sys.argv[2])
+    else:
+        mcp.run()
 
 
 if __name__ == "__main__":

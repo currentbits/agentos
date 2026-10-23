@@ -1,0 +1,18 @@
+[Unit]
+Description=AgentOS computer-use MCP server (Streamable HTTP, tailnet only)
+Requires=agentos-firewall.service
+After=agentos-firewall.service agentos-firstboot.service network.target
+
+[Service]
+User=agent
+LoadCredential=mcp-token:/etc/agentos/mcp-token
+ExecStart=/usr/local/bin/agentos-computer --http 0.0.0.0:8765
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/tmp
+
+[Install]
+WantedBy=multi-user.target
