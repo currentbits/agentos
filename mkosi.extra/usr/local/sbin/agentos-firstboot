@@ -50,7 +50,8 @@ chmod 644 /etc/agentos/desktop.conf
 chmod 711 /etc/agentos
 
 # 4d. Register the computer-use MCP server with the agent CLIs (warn only: never block boot on it).
-runuser -u agent -- env -i HOME=/home/agent USER=agent \
+# Bounded with timeout: a hung CLI (e.g. a network prompt) must not block console lockout prevention below.
+timeout 120 runuser -u agent -- env -i HOME=/home/agent USER=agent \
   PATH=/home/agent/.local/bin:/home/agent/.cargo/bin:/home/agent/.bun/bin:/home/agent/.opencode/bin:/home/agent/.grok/bin:/usr/local/bin:/usr/bin:/bin \
   /usr/local/lib/agentos/register-mcp || echo "warning: agentos-computer MCP registration incomplete" >&2
 
@@ -58,7 +59,7 @@ runuser -u agent -- env -i HOME=/home/agent USER=agent \
 ts_rc=0
 k=$(env_get "$AGENTOS_ENV" TS_AUTHKEY)
 if [ -n "$k" ]; then
-  if tailscale up --auth-key="$k" --hostname="$(hostname)" --ssh; then
+  if tailscale up --timeout=60s --auth-key="$k" --hostname="$(hostname)" --ssh; then
     env_unset "$AGENTOS_ENV" TS_AUTHKEY
   else
     ts_rc=$?
