@@ -25,7 +25,7 @@
 - Tool names and parameters (spec): `create_desktop() -> {id, view_url}`, `list_desktops()`, `destroy_desktop(id)`, `screenshot(desktop)`, `click(desktop, x, y, button)`, `double_click`, `move`, `drag`, `type(desktop, text)`, `key(desktop, combo)`, `scroll`, `cursor_position(desktop)`.
 - noVNC on `0.0.0.0:6080`. Per-desktop token: 128-bit random, hex. `view_url = http://<hostname>:6080/vnc.html?path=websockify%3Ftoken%3D<token>&autoconnect=1&resize=scale`.
 - Reachability: only via `tailscale0` (Plan 1 nftables). Our network services `Requires=`/`After=agentos-firewall.service`.
-- Services we ship run as `agent` with `NoNewPrivileges=yes`, `ProtectSystem=strict`, `ProtectHome=read-only`.
+- Network services we ship (`agentos-novnc`, `agentos-mcp-http`) run as `agent` with `NoNewPrivileges=yes`, `ProtectSystem=strict`, `ProtectHome=read-only`. Desktop units are exempt: a desktop is the agent's workspace and must allow `sudo` and writes to `~`.
 - Python deps live only in `/usr/local/lib/agentos/venv`: `mcp>=1.28,<2`, `pillow>=10`. Versions are recorded in the image manifest.
 - No CLI state in the image (Plan 1 finalize invariants stay green). CLI MCP registration happens at first boot.
 - Root used space ≤ 7168 MiB (Plan 1 `check_root_size_budget`).
