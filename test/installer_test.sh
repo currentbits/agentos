@@ -10,7 +10,7 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 printf '# comment\n\nAGENTOS_HOSTNAME=x\r\nPAD_TOKEN=abc==\nLAST=1' > "$t/a.env"
 [ "$(parse_env "$t/a.env")" = $'AGENTOS_HOSTNAME=x\nPAD_TOKEN=abc==\nLAST=1' ] || fail parse_env
 printf 'GOOD=1\nnot a pair\n' > "$t/b.env"
-if parse_env "$t/b.env" 2>"$t/err"; then fail "parse_env accepted a bad line"; fi
+if parse_env "$t/b.env" >/dev/null 2>"$t/err"; then fail "parse_env accepted a bad line"; fi
 grep -q '^line 2:' "$t/err" || fail "parse_env error names the line"
 printf 'lower=1\n' > "$t/c.env"
 if parse_env "$t/c.env" 2>/dev/null; then fail "parse_env accepted a lowercase key"; fi
@@ -30,9 +30,19 @@ cl="BOOT_IMAGE=/vmlinuz root=PARTUUID=x agentos.autoinstall=https://h.example/a.
 [ "$(cmdline_get agentos.autoinstall "$cl")" = "https://h.example/a.env" ] || fail cmdline_get
 if cmdline_get agentos.nothere "$cl" >/dev/null; then fail "cmdline_get absent"; fi
 
+# cmdline_get must not glob-expand the cmdline (URLs contain '?' and '*', and so do real filenames
+# that can sit in the caller's CWD). Build a directory whose contents are exactly matched by the
+# glob pattern that "https://h/x?y=1" becomes if word-split without quoting.
+mkdir -p "$t/glob/agentos.autoinstall=https:/h"
+touch "$t/glob/agentos.autoinstall=https:/h/xZy=1"
+(cd "$t/glob" && [ "$(cmdline_get agentos.autoinstall "agentos.autoinstall=https://h/x?y=1")" = "https://h/x?y=1" ]) ||
+  fail "cmdline_get glob-expanded a url"
+(cd "$t" && [ "$(cmdline_get agentos.other "foo=1 * agentos.other=5")" = 5 ]) ||
+  fail "cmdline_get: bare * token changed another key's value"
+
 # validators
 valid_https_url "https://h.example:8443/x?y=1" || fail url1
-for bad in "http://h/x" "https://h/a b" "https://" "ftp://h/x"; do
+for bad in "http://h/x" "https://h/a b" "https://" "ftp://h/x" "https://user@host/x" "https://[::1]/x"; do
   if valid_https_url "$bad"; then fail "url accepted: $bad"; fi
 done
 valid_sha256 "$h64" || fail sha
@@ -42,14 +52,22 @@ for bad in -bad Bad "" "a_b" "$(printf 'a%.0s' $(seq 1 64))"; do
   if valid_hostname "$bad"; then fail "hostname accepted: $bad"; fi
 done
 valid_ipv4 10.0.0.1 || fail ipv4
-for bad in 256.1.1.1 1.2.3 1.2.3.4.5 a.b.c.d; do if valid_ipv4 "$bad"; then fail "ipv4 accepted: $bad"; fi; done
+valid_ipv4 0.0.0.0 || fail "ipv4 rejected 0.0.0.0"
+for bad in 256.1.1.1 1.2.3 1.2.3.4.5 a.b.c.d 08.1.1.1 010.0.0.1 1.2.3.04; do
+  if valid_ipv4 "$bad"; then fail "ipv4 accepted: $bad"; fi
+done
+# network_file's caller validates each DNS entry with valid_ipv4 before calling network_file;
+# a rejected entry here is what keeps a ';'-laced DNS value out of the generated unit.
+if valid_ipv4 "1.1.1.1;evil"; then fail "ipv4 accepted DNS injection"; fi
 valid_cidr 192.168.1.10/24 || fail cidr
 for bad in 192.168.1.10 192.168.1.10/33 300.1.1.1/24; do if valid_cidr "$bad"; then fail "cidr accepted: $bad"; fi; done
 valid_iface enp3s0 || fail iface
 for bad in "en p" averyveryverylongname ""; do if valid_iface "$bad"; then fail "iface accepted: $bad"; fi; done
 valid_password_hash '$6$salt$hash' || fail hash6
 valid_password_hash '$y$j9T$a$b' || fail hashy
-for bad in plain '$1$x$y' '$6$a b'; do if valid_password_hash "$bad"; then fail "hash accepted: $bad"; fi; done
+for bad in plain '$1$x$y' '$6$a b' '$6$a:b' "$(printf '$6$a\nb')"; do
+  if valid_password_hash "$bad"; then fail "hash accepted: $bad"; fi
+done
 valid_ssh_pubkey "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFake test@x" || fail sshkey
 for bad in "$(printf 'ssh-ed25519 AAAA a\ncommand="x" ssh-ed25519 AAAA b')" 'command="x" ssh-ed25519 AAAA' "ssh-dss AAAA"; do
   if valid_ssh_pubkey "$bad"; then fail "ssh key accepted: $bad"; fi

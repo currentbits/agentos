@@ -31,8 +31,10 @@ env_value() {
 }
 
 cmdline_get() {
+  local -a words
   local w
-  for w in $2; do [[ $w == "$1="* ]] && { printf '%s' "${w#*=}"; return 0; }; done
+  read -ra words <<< "$2"
+  for w in "${words[@]}"; do [[ $w == "$1="* ]] && { printf '%s' "${w#*=}"; return 0; }; done
   return 1
 }
 
@@ -42,7 +44,8 @@ valid_hostname()      { [[ $1 =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]]; }
 valid_iface()         { [[ $1 =~ ^[A-Za-z0-9._-]{1,15}$ ]]; }
 valid_password_hash() { [[ $1 =~ ^\$(6|y)\$[^:[:space:]]+$ ]]; }
 valid_ipv4() {
-  [[ $1 =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || return 1
+  local oct='(0|[1-9][0-9]{0,2})'
+  [[ $1 =~ ^$oct(\.$oct){3}$ ]] || return 1
   local o IFS=.
   for o in $1; do [ "$((10#$o))" -le 255 ] || return 1; done
 }
