@@ -1,0 +1,13 @@
+#!/bin/bash
+# vnc-token add|del N: manage the websockify token file for desktop N (runs as root from the unit).
+set -euo pipefail
+op=${1:?usage: vnc-token add|del N}; n=${2:?usage: vnc-token add|del N}
+[[ $n =~ ^[0-9]+$ ]] || { echo "invalid desktop number: $n" >&2; exit 2; }
+f=/run/agentos/vnc/$n
+case $op in
+  add) t=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
+       install -m 640 -o root -g agent /dev/null "$f"
+       printf '%s: localhost:%d\n' "$t" $((5900 + n)) > "$f" ;;
+  del) rm -f "$f" ;;
+  *)   echo "usage: vnc-token add|del N" >&2; exit 2 ;;
+esac

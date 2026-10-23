@@ -64,8 +64,8 @@ export -f vm vml qga
 
 boot() {  # boot <mode> <port>
   local mode=$1
-  PORT=$2; HOSTPORT_HTTP=$(( $2 + 1 ))
-  export PORT HOSTPORT_HTTP MODE=$mode
+  PORT=$2; HOSTPORT_HTTP=$(( $2 + 1 )); HOSTPORT_NOVNC=$(( $2 + 2 )); HOSTPORT_MCP=$(( $2 + 3 ))
+  export PORT HOSTPORT_HTTP HOSTPORT_NOVNC HOSTPORT_MCP MODE=$mode
   printf 'instance-id: smoke-%s-%s\n' "$mode" "$RANDOM" > "$WORK/meta-data"
   local seed=()
   if [[ $mode != *-noseed ]]; then
@@ -84,7 +84,7 @@ boot() {  # boot <mode> <port>
     "${seed[@]}" \
     -chardev "socket,id=qga0,path=$WORK/qga-$mode.sock,server=on,wait=off" \
     -device virtio-serial -device virtserialport,chardev=qga0,name=org.qemu.guest_agent.0 \
-    -nic "user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:$PORT-:22,hostfwd=tcp:127.0.0.1:$HOSTPORT_HTTP-:8080" \
+    -nic "user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:$PORT-:22,hostfwd=tcp:127.0.0.1:$HOSTPORT_HTTP-:8080,hostfwd=tcp:127.0.0.1:$HOSTPORT_NOVNC-:6080,hostfwd=tcp:127.0.0.1:$HOSTPORT_MCP-:8765" \
     -display none -serial "file:$WORK/serial-$mode.log" \
     -daemonize -pidfile "$WORK/qemu-$mode.pid"
   if [[ $mode == *-noseed ]]; then

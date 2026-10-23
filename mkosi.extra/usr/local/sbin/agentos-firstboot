@@ -40,6 +40,13 @@ fi
 # agentos.env is root-only, so publish the console mode to a world-readable file.
 printf 'AGENTOS_CONSOLE=%s\n' "$(env_get "$AGENTOS_ENV" AGENTOS_CONSOLE | grep -x terminal || echo headless)" > /etc/agentos/console.mode
 chmod 644 /etc/agentos/console.mode
+
+# Desktop settings for agentos-computer (runs as agent; agentos.env is root-only). Invalid -> default.
+md=$(env_get "$AGENTOS_ENV" AGENTOS_MAX_DESKTOPS | grep -xE '[1-9]|1[0-6]' || echo 8)
+sw=$(env_get "$AGENTOS_ENV" AGENTOS_SCREENSHOT_WIDTH | grep -xE '6[4-9][0-9]|[7-9][0-9]{2}|1[0-8][0-9]{2}|19[01][0-9]|1920' || echo 1366)
+printf 'MAX_DESKTOPS=%s\nSCREENSHOT_WIDTH=%s\n' "$md" "$sw" > /etc/agentos/desktop.conf
+chmod 644 /etc/agentos/desktop.conf
+
 chmod 711 /etc/agentos
 
 # 5. Tailscale late: a bad key must not block the steps above. Failure -> unit fails, retried next boot.

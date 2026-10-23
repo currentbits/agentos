@@ -7,5 +7,7 @@ Type=simple
 User=agent
 WorkingDirectory=/home/agent
 ExecStart=/usr/local/lib/agentos/desktop-session %i
+ExecStartPost=+/usr/local/lib/agentos/vnc-token add %i
+ExecStopPost=+/usr/local/lib/agentos/vnc-token del %i
 KillMode=control-group
 Restart=no

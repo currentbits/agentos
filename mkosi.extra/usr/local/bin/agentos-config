@@ -48,6 +48,7 @@ menu() {
       apikeys   "API keys / OAuth token" \
       lanssh    "Allow SSH from LAN (no Tailscale)" \
       console   "Local console: headless or terminal" \
+      desktops  "Desktops: max count and screenshot width" \
       reboot    "Auto-reboot for kernel security updates" \
       mcptoken  "Show MCP HTTP bearer token" \
       done      "Apply and exit" 3>&1 1>&2 2>&3) || c=done
@@ -69,6 +70,8 @@ menu() {
                  done ;;
       lanssh)    if whiptail --yesno "Open SSH (key-only) on all interfaces?" 8 60; then cmd_set AGENTOS_LAN_SSH 1; else cmd_set AGENTOS_LAN_SSH 0; fi ;;
       console)   m=$(whiptail --menu "Local console mode" 12 60 2 headless "Status + login prompt" terminal "Full-screen terminal after login" 3>&1 1>&2 2>&3) && cmd_set AGENTOS_CONSOLE "$m" || true ;;
+      desktops)  m=$(whiptail --inputbox "Max concurrent desktops (1-16)" 10 60 "$(cmd_get AGENTOS_MAX_DESKTOPS || true)" 3>&1 1>&2 2>&3) && [ -n "$m" ] && cmd_set AGENTOS_MAX_DESKTOPS "$m" || true
+                 w=$(whiptail --inputbox "Screenshot width in px (640-1920, default 1366)" 10 60 "$(cmd_get AGENTOS_SCREENSHOT_WIDTH || true)" 3>&1 1>&2 2>&3) && [ -n "$w" ] && cmd_set AGENTOS_SCREENSHOT_WIDTH "$w" || true ;;
       reboot)    if whiptail --yesno "Reboot automatically at 04:00 when a kernel update requires it?" 8 70; then cmd_set AGENTOS_AUTO_REBOOT 1; else cmd_set AGENTOS_AUTO_REBOOT 0; fi ;;
       mcptoken)  whiptail --msgbox "$(cat /etc/agentos/mcp-token)" 8 72 ;;
       done)      cmd_apply || whiptail --msgbox "Some settings failed to apply (see: journalctl -u agentos-firstboot). Tailscale key wrong?" 9 72

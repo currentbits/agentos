@@ -1,0 +1,16 @@
+[Unit]
+Description=AgentOS live desktop viewer (noVNC, tailnet only)
+Requires=agentos-firewall.service
+After=agentos-firewall.service network.target
+
+[Service]
+User=agent
+ExecStart=/usr/bin/websockify --web /usr/share/novnc --token-plugin TokenFile --token-source /run/agentos/vnc 0.0.0.0:6080
+Restart=on-failure
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
