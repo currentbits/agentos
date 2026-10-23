@@ -218,12 +218,15 @@ class BearerAuth:
         self.app, self.expected = app, b"Bearer " + token
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] == "http":
-            got = dict(scope["headers"]).get(b"authorization", b"")
+        if scope["type"] != "lifespan":
+            got = dict(scope.get("headers", {})).get(b"authorization", b"")
             if not hmac.compare_digest(got, self.expected):
-                await send({"type": "http.response.start", "status": 401,
-                            "headers": [(b"content-type", b"text/plain"), (b"www-authenticate", b"Bearer")]})
-                await send({"type": "http.response.body", "body": b"unauthorized\n"})
+                if scope["type"] == "websocket":
+                    await send({"type": "websocket.close", "code": 1008})
+                else:
+                    await send({"type": "http.response.start", "status": 401,
+                                "headers": [(b"content-type", b"text/plain"), (b"www-authenticate", b"Bearer")]})
+                    await send({"type": "http.response.body", "body": b"unauthorized\n"})
                 return
         await self.app(scope, receive, send)
 
@@ -232,7 +235,10 @@ def serve_http(hostport):
     import uvicorn
     host, _, port = hostport.rpartition(":")
     path = os.path.join(os.environ.get("CREDENTIALS_DIRECTORY", "/etc/agentos"), "mcp-token")
-    token = open(path, "rb").read().strip()
+    try:
+        token = open(path, "rb").read().strip()
+    except FileNotFoundError:
+        sys.exit(f"MCP token file {path} not found")
     if len(token) < 32:
         sys.exit(f"MCP token in {path} missing or too short")
     uvicorn.run(BearerAuth(mcp.streamable_http_app(), token), host=host, port=int(port), log_level="warning")
