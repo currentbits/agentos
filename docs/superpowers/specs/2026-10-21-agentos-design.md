@@ -100,7 +100,7 @@ Python, xdotool + scrot. Tools:
 
 Transports, same code:
 - stdio — pre-registered in `~/.claude.json`, `~/.codex/config.toml`, opencode's `opencode.json`, and grok's settings.
-- Streamable HTTP (`--http`) — `agentos-mcp-http.service` on `<tailnet-ip>:8765`, requiring `Authorization: Bearer $AGENTOS_MCP_TOKEN`. The token is generated at first boot (256-bit), stored root-only in `/etc/agentos/mcp-token`, and shown by `agentos-config`. Constant-time comparison; requests without it get 401.
+- Streamable HTTP (`--http`) — `agentos-mcp-http.service` bound to `0.0.0.0:8765` (reachable only via `tailscale0` thanks to the nftables policy; binding the tailnet IP would break whenever tailscale0 comes up late), stateless, requiring `Authorization: Bearer <token>`. The token is generated at first boot (256-bit), stored root-only in `/etc/agentos/mcp-token`, passed to the service via `LoadCredential=`, and shown by `agentos-config`. The service runs as `agent` without `PrivateTmp` on purpose: it needs `/tmp/.X11-unix` and the shared desktop lock. Constant-time comparison; requests without it get 401.
 
 If an existing well-maintained xdotool MCP server meets these requirements, use it instead of writing ours.
 
@@ -113,7 +113,7 @@ If an existing well-maintained xdotool MCP server meets these requirements, use 
 
 ### Watching
 
-One websockify/noVNC on `<tailnet-ip>:6080` using `--token-plugin TokenFile --token-source /run/agentos/vnc/`. `view_url = http://<host>:6080/vnc.html?path=websockify?token=<token>`. Tailscale encrypts the transport, so plain http on the tailnet is acceptable. Without Tailscale, reach it via SSH tunnel.
+One websockify/noVNC bound to `0.0.0.0:6080` (tailnet-only via nftables) using `--token-plugin TokenFile --token-source /run/agentos/vnc/`. `view_url = http://<host>:6080/vnc.html?path=websockify%3Ftoken%3D<token>&autoconnect=1&resize=scale`, where `<host>` is the Tailscale DNS name when Tailscale is up, else the hostname. The view URL grants full interactive control, not just viewing: treat it like the MCP token. Tailscale encrypts the transport, so plain http on the tailnet is acceptable. Without Tailscale, reach it via SSH tunnel.
 
 ### Web tasks
 
@@ -151,7 +151,7 @@ Written by: the installer (bare metal), cloud-init `write_files` (VM images), or
 Oneshot, before desktop/MCP units, re-runs on each boot until it succeeds:
 1. Apply hostname.
 2. If `TS_AUTHKEY` set: `tailscale up --authkey --hostname --ssh`, then delete `TS_AUTHKEY` from the file. Failure prints the reason to console and retries next boot.
-3. Move API keys/tokens to `~agent/.config/agentos/secrets.env` (0600), loaded by `/etc/profile.d/agentos.sh` into login shells. Desktop/MCP units never read secrets.
+3. Move API keys/tokens to `~agent/.config/agentos/secrets.env` (0600), parsed (never sourced) by `/etc/profile.d/agentos.sh` into login shells. The MCP/noVNC services never read secrets; desktop terminals are login shells, so agents started inside a desktop do get the keys (intended).
 
 ### `agentos-config`
 
@@ -268,6 +268,7 @@ The MCP server additionally carries an `assert`-based self-check of the coordina
 
 Every install and every VM from the same image must not share identity:
 - `/etc/machine-id` empty in the image (mkosi default) → generated at first boot.
+- `/etc/agentos/mcp-token` absent in the image (build fails otherwise) → generated at first boot.
 - SSH host keys removed at build (`RemoveFiles=/etc/ssh/ssh_host_*`); `agentos-ssh-keygen.service` runs `ssh-keygen -A` before sshd starts when no host key exists.
 - No Tailscale state in the image (`/var/lib/tailscale` empty); systemd random seed not shipped.
 - No CLI login state in the image: CI asserts `~agent/.claude*`, `~agent/.codex/auth.json`, grok and opencode auth files don't exist.

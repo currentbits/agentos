@@ -1,3 +1,4 @@
 mkosi.output/
 mkosi.cache/
 mkosi.tools/
+__pycache__/
