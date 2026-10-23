@@ -16,8 +16,19 @@ check_two_desktops_independent() {
   vm 'sudo systemctl stop agentos-desktop@2.service && sleep 1 && ! pgrep -u agent -x Xvnc'
 }
 check_desktop_restart_after_crash() {
-  vm 'sudo systemctl start agentos-desktop@3.service' && wait_x 3 &&
-  vm 'pkill -KILL -u agent -x Xvnc ; sleep 2; sudo systemctl stop agentos-desktop@3.service 2>/dev/null; sudo systemctl reset-failed agentos-desktop@3.service 2>/dev/null; sudo systemctl start agentos-desktop@3.service' &&
-  wait_x 3 && vm 'sudo systemctl stop agentos-desktop@3.service'
+  # -x Xvnc would kill every desktop's Xvnc; -f '^Xvnc :3 ' targets only :3's argv0+arg -
+  # proven below by starting :2 alongside and asserting it survives the kill.
+  vm 'sudo systemctl start agentos-desktop@2.service agentos-desktop@3.service' && wait_x 2 && wait_x 3 &&
+  vm "pkill -KILL -u agent -f '^Xvnc :3 '; sleep 2; DISPLAY=:2 xdotool getdisplaygeometry >/dev/null || { echo ':2 died too'; exit 1; }" &&
+  vm 'sudo systemctl stop agentos-desktop@3.service 2>/dev/null; sudo systemctl reset-failed agentos-desktop@3.service 2>/dev/null; sudo systemctl start agentos-desktop@3.service' &&
+  wait_x 3 && vm 'sudo systemctl stop agentos-desktop@2.service agentos-desktop@3.service'
 }
 check_terminal_login_shell() { vm 'grep -qx "CommandLoginShell=TRUE" ~/.config/xfce4/terminal/terminalrc'; }
+check_xvnc_loopback_only() {
+  # ss is at /usr/bin/ss in this image (not /usr/sbin as iproute2 ships on some distros); the
+  # non-login PATH here is /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin so the
+  # plain name would resolve fine too, but the full path removes any doubt.
+  vm 'sudo systemctl start agentos-desktop@9.service' && wait_x 9 &&
+  vm '! /usr/bin/ss -Hltn | grep -E ":59[0-9]{2}\b" | grep -vE "127\.0\.0\.1|\[::1\]"' &&
+  vm 'sudo systemctl stop agentos-desktop@9.service'
+}

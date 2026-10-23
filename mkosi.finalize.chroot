@@ -43,5 +43,6 @@ for f in "$A/.codex/auth.json" \
          "$A/.grok/auth.json" "$A/.grok/mcp_credentials.json"; do
   [ -e "$f" ] && fail "CLI auth state baked into image: $f"
 done
+[ -e /etc/agentos/mcp-token ] && fail "mcp-token baked into image (first-boot-only secret)"
 
 echo "image invariants OK"

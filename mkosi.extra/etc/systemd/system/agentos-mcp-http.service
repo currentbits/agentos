@@ -2,6 +2,7 @@
 Description=AgentOS computer-use MCP server (Streamable HTTP, tailnet only)
 Requires=agentos-firewall.service
 After=agentos-firewall.service agentos-firstboot.service network.target
+ConditionPathExists=/etc/agentos/mcp-token
 
 [Service]
 User=agent

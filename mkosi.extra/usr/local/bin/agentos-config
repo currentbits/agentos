@@ -73,7 +73,7 @@ menu() {
       desktops)  m=$(whiptail --inputbox "Max concurrent desktops (1-16)" 10 60 "$(cmd_get AGENTOS_MAX_DESKTOPS || true)" 3>&1 1>&2 2>&3) && [ -n "$m" ] && cmd_set AGENTOS_MAX_DESKTOPS "$m" || true
                  w=$(whiptail --inputbox "Screenshot width in px (640-1920, default 1366)" 10 60 "$(cmd_get AGENTOS_SCREENSHOT_WIDTH || true)" 3>&1 1>&2 2>&3) && [ -n "$w" ] && cmd_set AGENTOS_SCREENSHOT_WIDTH "$w" || true ;;
       reboot)    if whiptail --yesno "Reboot automatically at 04:00 when a kernel update requires it?" 8 70; then cmd_set AGENTOS_AUTO_REBOOT 1; else cmd_set AGENTOS_AUTO_REBOOT 0; fi ;;
-      mcptoken)  whiptail --msgbox "$(cat /etc/agentos/mcp-token)" 8 72 ;;
+      mcptoken)  whiptail --msgbox "$(cat /etc/agentos/mcp-token)\n\nThis token (and any view_url built from it) gives full control of the desktops: treat it like a root password." 11 72 ;;
       done)      cmd_apply || whiptail --msgbox "Some settings failed to apply (see: journalctl -u agentos-firstboot). Tailscale key wrong?" 9 72
                  return ;;
     esac
