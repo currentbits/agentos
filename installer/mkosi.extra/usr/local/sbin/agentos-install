@@ -191,7 +191,9 @@ ask() {  # ask <title> <prompt> <default> <validator|-> : repeat until valid or 
 
 tui() {
   local env=/run/agentos-install.env disk name size model type why hidden="" items=() conf hn mode iface="" addr="" gw dns
-  local pw pw2 hash="" key gh ts lan k v cm
+  local pw pw2 hash="" key gh ts lan k v cm parts apikeys=""
+  trap 'rm -f /run/agentos-install.env' EXIT  # = $env, holds secrets (literal: the trap may run after tui's locals are gone)
+  trap 'exit 130' INT TERM HUP  # make an interrupted TUI run the EXIT trap
   # Offer only disks the engine would accept (same check_disk rules: not the stick, not in use, >= 32 GiB, unmounted).
   # Subshell: check_disk dies on a refused disk; that must not exit the TUI.
   while read -r name type size model; do
@@ -202,7 +204,8 @@ tui() {
   [ ${#items[@]} -gt 0 ] || { W --msgbox "No installable disk found.$hidden" 16 76; return 1; }
 
   disk=$(W --title "Disk" --menu "Install AgentOS on which disk?\nThe whole disk will be ERASED." 18 72 8 "${items[@]}") || return 1
-  conf=$(W --title "Erase $disk?" --inputbox "Type the disk name ($(basename "$disk")) to confirm erasing it:" 10 72 "") || return 1
+  parts=$(lsblk -lno NAME,FSTYPE,LABEL,SIZE "$disk" | head -8)
+  conf=$(W --title "Erase $disk?" --inputbox "Current contents (ALL will be erased):\n$parts\n\nType the disk name ($(basename "$disk")) to confirm erasing it:" 20 76 "") || return 1
   [ "$conf" = "$(basename "$disk")" ] || { W --msgbox "Name did not match; nothing was changed." 8 60; return 1; }
 
   hn=$(ask Hostname "Hostname (lowercase letters, digits, dashes):" agentos valid_hostname) || return 1
@@ -227,7 +230,11 @@ tui() {
   lan=0
   [ -n "$ts" ] || ! W --title "SSH from LAN" --yesno "No Tailscale key. Allow SSH (key-only) from your local network?" 8 70 || lan=1
   cm=$(W --title Console --menu "Local console after install" 12 70 2 headless "Status + login prompt" terminal "Full-screen terminal after login") || return 1
-  # Show only whether a secret is set, never its value.
+  for k in ANTHROPIC_API_KEY OPENAI_API_KEY GROK_CODE_XAI_API_KEY CLAUDE_CODE_OAUTH_TOKEN; do
+    v=$(W --title "API keys (optional)" --passwordbox "$k (empty = skip; can be set later with agentos-config)" 10 72) || return 1
+    [ -z "$v" ] || apikeys+="$k=$v"$'\n'
+  done
+  # The summary is the last question; nothing is written before it is confirmed. Show only whether a secret is set.
   local s_pw=${pw:+set} s_key=${key:+yes} s_ts=${ts:+yes}
   W --title Summary --yesno "Disk:      $disk (ERASED)\nHostname:  ${hn:-default}\nNetwork:   $mode${iface:+ $iface $addr}\nPassword:  ${s_pw:-none}\nSSH key:   ${s_key:-no}${gh:+ + GitHub $gh}\nTailscale: ${s_ts:-no}\nLAN SSH:   $lan\n\nInstall now?" 18 72 || return 1
 
@@ -239,10 +246,7 @@ tui() {
      [ -z "$gh" ] || printf 'AGENTOS_GITHUB_USER=%s\n' "$gh"
      [ -z "$ts" ] || printf 'TS_AUTHKEY=%s\n' "$ts"
      [ "$mode" != static ] || printf 'AGENTOS_NET_IFACE=%s\nAGENTOS_NET_ADDRESS=%s\nAGENTOS_NET_GATEWAY=%s\nAGENTOS_NET_DNS=%s\n' "$iface" "$addr" "$gw" "$dns"
-     for k in ANTHROPIC_API_KEY OPENAI_API_KEY GROK_CODE_XAI_API_KEY CLAUDE_CODE_OAUTH_TOKEN; do
-       v=$(W --title "API keys (optional)" --passwordbox "$k (empty = skip; can be set later with agentos-config)" 10 72) || v=""
-       [ -z "$v" ] || printf '%s=%s\n' "$k" "$v"
-     done
+     printf '%s' "$apikeys"
    } > "$env")
   clear
   # A separate process, not (install_from_env ...): inside an if/||/&& condition bash disables errexit AND the
