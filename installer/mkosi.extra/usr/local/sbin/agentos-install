@@ -118,8 +118,8 @@ auto() {
     fat=/run/agentos-data/agentos.env
   fi
   src=$(autoinstall_source "$(cat /proc/cmdline)" "$fat") || die "invalid autoinstall settings on the kernel command line"
-  # shellcheck disable=SC2086  # deliberate word splitting of "kind arg [sha]"
-  set -- $src
+  # shellcheck disable=SC2086  # deliberate word splitting of "kind arg [sha]"; set -f: no globbing of '?'/'*' in the URL
+  set -f; set -- $src; set +f
   case $1 in
     none) echo "AGENTOS-INSTALLER READY (interactive)"; return 0 ;;
     file) install -m 600 "$2" /run/agentos-install.env ;;
@@ -130,14 +130,26 @@ auto() {
         echo "$3  /run/agentos-install.env" | sha256sum -c --quiet || die "autoinstall file does not match agentos.autoinstall_sha256"
       fi ;;
   esac
+  # set -e + pipefail: a failed install exits here (the INSTALL FAILED line is already printed).
   install_from_env /run/agentos-install.env 2>&1 | tee -a "$LOG"
-  [ "${PIPESTATUS[0]}" -eq 0 ] || exit 1
-  [ "$1" = file ] && echo "Remove the stick, then wipe agentos.env from its AGENTOS partition: it may contain secrets."
-  if [ "$(parse_env /run/agentos-install.env | env_value AGENTOS_INSTALL_POWEROFF)" = 1 ]; then
-    systemctl poweroff
+  local off
+  off=$(parse_env /run/agentos-install.env | env_value AGENTOS_INSTALL_POWEROFF)
+  rm -f /run/agentos-install.env
+  if [ "$1" = file ]; then
+    # Delete the settings (secrets) from the stick; left in place they would also reinstall on every boot.
+    if mount -o remount,rw /run/agentos-data && rm -f "$fat" && sync -f /run/agentos-data; then
+      echo "agentos.env deleted from the stick's AGENTOS partition."
+    else
+      echo "Could not delete agentos.env from the stick's AGENTOS partition: powering off instead of rebooting," \
+           "so it does not install again. Remove the stick and delete agentos.env by hand (it may contain secrets)."
+      off=1
+    fi
   else
-    systemctl reboot
+    echo "The kernel command line still holds the autoinstall URL: powering off." \
+         "Remove the autoinstall boot entry/medium before powering on."
+    off=1
   fi
+  if [ "$off" = 1 ]; then systemctl poweroff; else systemctl reboot; fi
 }
 
 case "${1:-}" in

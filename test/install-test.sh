@@ -17,8 +17,10 @@ stick() {  # stick <env-file> -> $WORK/stick.raw
   local start
   start=$(partx -g -o START,NAME "$WORK/stick.raw" | awk '$2=="AGENTOS"{print $1}')
   [ -n "$start" ] || { echo "no AGENTOS partition in installer image" >&2; exit 1; }
-  mcopy -o -i "$WORK/stick.raw@@$((start * 512))" "$1" ::agentos.env
+  FAT="$WORK/stick.raw@@$((start * 512))"
+  mcopy -o -i "$FAT" "$1" ::agentos.env
 }
+fat_env_gone() { local l; l=$(mdir -b -i "$FAT" ::) && ! grep -qix '::/agentos.env' <<< "$l"; }
 
 run_installer() {  # run_installer <target.qcow2> <marker> <timeout-s>: boot until marker or poweroff
   cp "$OVMF_VARS" "$WORK/vars.fd"; : > "$WORK/serial.log"
@@ -81,7 +83,8 @@ EOF
 stick "$WORK/env"
 qemu-img create -q -f qcow2 "$WORK/target.qcow2" 40G
 expect unattended_install run_installer "$WORK/target.qcow2" "AGENTOS INSTALL OK" 1800
-expect secrets_warning grep -q "wipe agentos.env" "$WORK/serial.log"
+expect fat_env_deleted fat_env_gone
+expect fat_env_deleted_message grep -q "agentos.env deleted" "$WORK/serial.log"
 
 if [ "$FAILS" -ne 0 ]; then echo "$FAILS FAILURE(S) before smoke"; exit 1; fi
 
