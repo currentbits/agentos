@@ -1,0 +1,25 @@
+#!/bin/bash
+# AgentOS installer. Task 2 version: --auto detects unattended config and otherwise reports READY.
+set -euo pipefail
+. /usr/lib/agentos-installer/lib.sh
+DATA_DEV=/dev/disk/by-partlabel/AGENTOS
+
+auto() {
+  local fat="" src
+  mkdir -p /run/agentos-data
+  if [ -e "$DATA_DEV" ] && mount -o ro "$DATA_DEV" /run/agentos-data 2>/dev/null; then
+    fat=/run/agentos-data/agentos.env
+  fi
+  src=$(autoinstall_source "$(cat /proc/cmdline)" "$fat") || { echo "INSTALL FAILED: invalid autoinstall settings" >&2; exit 1; }
+  if [ "$src" = none ]; then
+    echo "AGENTOS-INSTALLER READY (interactive)"
+    return 0
+  fi
+  echo "unattended install not implemented yet ($src)" >&2
+  exit 1
+}
+
+case "${1:-}" in
+  --auto) auto ;;
+  *) echo "usage: agentos-install --auto" >&2; exit 2 ;;
+esac

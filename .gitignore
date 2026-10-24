@@ -2,3 +2,6 @@ mkosi.output/
 mkosi.cache/
 mkosi.tools/
 __pycache__/
+mkosi.output/installer-payload/
+installer/mkosi.cache/
+installer/mkosi.tools/

@@ -1,0 +1,20 @@
+[Unit]
+Description=AgentOS unattended install (if configured)
+Wants=network-online.target
+After=network-online.target systemd-udev-settle.service
+Before=getty@tty1.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/agentos-install --auto
+# kmsg, not console: /dev/console is tty0 (last console= on the cmdline), but kernel-log lines reach
+# every console, i.e. the screen on real hardware AND the serial log the tests read.
+StandardOutput=kmsg
+StandardError=kmsg
+# By the time this unit runs, systemd has already lowered the runtime console log level below the
+# default kmsg priority (info/6), so these lines never reach the console/serial log even with a
+# higher loglevel= on the kernel cmdline. SyslogLevel=err (3) keeps this message visible regardless.
+SyslogLevel=err
+
+[Install]
+WantedBy=multi-user.target
