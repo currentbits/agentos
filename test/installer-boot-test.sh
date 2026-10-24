@@ -21,6 +21,7 @@ boot_until() {  # boot_until <label> <marker> <qemu drive args...>
 }
 
 boot_until usb "AGENTOS-INSTALLER READY (interactive)" -drive "file=$INST,format=raw,if=virtio,readonly=on"
+boot_until usb-tui "AGENTOS-INSTALLER TUI STARTED" -drive "file=$INST,format=raw,if=virtio,readonly=on"
 if [ "${SKIP_CD:-0}" != 1 ]; then
   boot_until cd "AGENTOS-INSTALLER READY (interactive)" -drive "file=$INST,format=raw,media=cdrom,readonly=on"
 fi

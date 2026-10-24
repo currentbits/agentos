@@ -1,0 +1,6 @@
+#!/bin/bash
+# tty1 login program on the installer: the interactive installer, restarted by getty when it exits.
+set -euo pipefail
+export TERM=linux
+echo "AGENTOS-INSTALLER TUI STARTED" > /dev/kmsg 2>/dev/null || true
+exec /usr/local/sbin/agentos-install --tui

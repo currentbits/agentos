@@ -1,6 +1,7 @@
 #!/bin/bash
 # AgentOS installer: writes the tested AgentOS disk image to a whole disk and applies settings.
 #   agentos-install --auto        unattended if configured (kernel cmdline URL or AGENTOS partition), else READY
+#   agentos-install --tui         interactive (whiptail) installer; runs on tty1
 #   agentos-install --env FILE    install using KEY=VALUE settings from FILE
 set -Eeuo pipefail  # -E: the ERR trap set in install_from_env also fires in functions and subshells
 . /usr/lib/agentos-installer/lib.sh
@@ -66,6 +67,7 @@ install_from_env() {
   # --- write ---
   echo "Writing AgentOS to $disk. Everything on it will be erased."
   ERASED=$disk
+  # From here the ERR trap fires inside $(...) too: add no substitutions whose failure is expected (or guard them with ||).
   trap 'die "unexpected error at line $LINENO"' ERR
   wipefs -a "$real" >/dev/null
   # status=progress floods kmsg in --auto mode (carriage-return updates); the TUI sets AGENTOS_DD_STATUS=progress.
@@ -73,12 +75,12 @@ install_from_env() {
     die "writing the image failed"
   sgdisk -e "$real" >/dev/null || die "could not move the backup GPT to the end of $disk"
   partx -u "$real" 2>/dev/null || true
-  udevadm settle
+  udevadm settle || true  # a slow device is handled by the retry loop below, not the ERR trap
   root=""
   for _ in $(seq 1 20); do
     root=$(lsblk -lnpo NAME,PARTLABEL "$real" | awk -v l="$ROOT_PARTLABEL" '$2==l{print $1}')
     [ -n "$root" ] && break
-    sleep 0.5; udevadm settle
+    sleep 0.5; udevadm settle || true
   done
   [ -n "$root" ] || die "root partition not found on $disk after writing"
 
@@ -152,8 +154,88 @@ auto() {
   if [ "$off" = 1 ]; then systemctl poweroff; else systemctl reboot; fi
 }
 
+W() { whiptail --backtitle "AgentOS installer" "$@" 3>&1 1>&2 2>&3; }
+ask() {  # ask <title> <prompt> <default> <validator|-> : repeat until valid or empty-allowed
+  local v
+  while true; do
+    v=$(W --title "$1" --inputbox "$2" 12 72 "$3") || return 1
+    [ "$4" = - ] || [ -z "$v" ] || "$4" "$v" && { printf '%s' "$v"; return 0; }
+    W --msgbox "That value is not valid. Please try again." 8 50
+  done
+}
+
+tui() {
+  local env=/run/agentos-install.env disk name size model type why hidden="" items=() conf hn mode iface="" addr="" gw dns
+  local pw pw2 hash="" key gh ts lan k v cm
+  # Offer only disks the engine would accept (same check_disk rules: not the stick, not in use, >= 32 GiB, unmounted).
+  # Subshell: check_disk dies on a refused disk; that must not exit the TUI.
+  while read -r name type size model; do
+    [ "$type" = disk ] || continue
+    if why=$( (check_disk "/dev/$name") 2>&1 ); then items+=("/dev/$name" "$size ${model//\\x20/ }")
+    else hidden+="\n/dev/$name: ${why#INSTALL FAILED: }"; fi
+  done < <(lsblk -dnro NAME,TYPE,SIZE,MODEL)
+  [ ${#items[@]} -gt 0 ] || { W --msgbox "No installable disk found.$hidden" 16 76; return 1; }
+
+  disk=$(W --title "Disk" --menu "Install AgentOS on which disk?\nThe whole disk will be ERASED." 18 72 8 "${items[@]}") || return 1
+  conf=$(W --title "Erase $disk?" --inputbox "Type the disk name ($(basename "$disk")) to confirm erasing it:" 10 72 "") || return 1
+  [ "$conf" = "$(basename "$disk")" ] || { W --msgbox "Name did not match; nothing was changed." 8 60; return 1; }
+
+  hn=$(ask Hostname "Hostname (lowercase letters, digits, dashes):" agentos valid_hostname) || return 1
+  mode=$(W --title Network --menu "Network configuration" 12 60 2 dhcp "Automatic (DHCP)" static "Static IPv4") || return 1
+  if [ "$mode" = static ]; then
+    local nics=(); for k in /sys/class/net/*; do k=${k##*/}; [ "$k" = lo ] || nics+=("$k" ""); done
+    iface=$(W --title Network --menu "Interface" 14 60 6 "${nics[@]}") || return 1
+    addr=$(ask Network "Address with prefix, e.g. 192.168.1.50/24" "" valid_cidr) || return 1
+    gw=$(ask Network "Gateway, e.g. 192.168.1.1" "" valid_ipv4) || return 1
+    dns=$(W --title Network --inputbox "DNS servers, comma separated" 10 60 "1.1.1.1,9.9.9.9") || return 1
+  fi
+  pw=$(W --title Access --passwordbox "Password for user 'agent' (console + sudo). Empty = none, set later." 10 72) || return 1
+  if [ -n "$pw" ]; then
+    pw2=$(W --title Access --passwordbox "Repeat the password" 10 72) || return 1
+    [ "$pw" = "$pw2" ] || { W --msgbox "Passwords did not match." 8 40; return 1; }
+    hash=$(openssl passwd -6 -stdin <<< "$pw") && [ -n "$hash" ] || { W --msgbox "Could not hash the password." 8 40; return 1; }
+    pw="set"  # drop the plaintext; only "is set" is needed from here on
+  fi
+  key=$(ask Access "SSH public key to allow (optional, paste one line):" "" valid_ssh_pubkey) || return 1
+  gh=$(W --title Access --inputbox "Also import SSH keys from GitHub user (optional):" 10 72 "") || return 1
+  ts=$(W --title Tailscale --passwordbox "Tailscale auth key (optional). Use a single-use, pre-approved key tagged tag:agentos." 10 72) || return 1
+  lan=0
+  [ -n "$ts" ] || ! W --title "SSH from LAN" --yesno "No Tailscale key. Allow SSH (key-only) from your local network?" 8 70 || lan=1
+  cm=$(W --title Console --menu "Local console after install" 12 70 2 headless "Status + login prompt" terminal "Full-screen terminal after login") || return 1
+  # Show only whether a secret is set, never its value.
+  local s_pw=${pw:+set} s_key=${key:+yes} s_ts=${ts:+yes}
+  W --title Summary --yesno "Disk:      $disk (ERASED)\nHostname:  ${hn:-default}\nNetwork:   $mode${iface:+ $iface $addr}\nPassword:  ${s_pw:-none}\nSSH key:   ${s_key:-no}${gh:+ + GitHub $gh}\nTailscale: ${s_ts:-no}\nLAN SSH:   $lan\n\nInstall now?" 18 72 || return 1
+
+  (umask 077
+   {
+     printf 'AGENTOS_INSTALL_DISK=%s\nAGENTOS_HOSTNAME=%s\nAGENTOS_CONSOLE=%s\nAGENTOS_LAN_SSH=%s\n' "$disk" "$hn" "$cm" "$lan"
+     [ -z "$hash" ] || printf 'AGENTOS_PASSWORD_HASH=%s\n' "$hash"
+     [ -z "$key" ] || printf 'AGENTOS_SSH_KEY=%s\n' "$key"
+     [ -z "$gh" ] || printf 'AGENTOS_GITHUB_USER=%s\n' "$gh"
+     [ -z "$ts" ] || printf 'TS_AUTHKEY=%s\n' "$ts"
+     [ "$mode" != static ] || printf 'AGENTOS_NET_IFACE=%s\nAGENTOS_NET_ADDRESS=%s\nAGENTOS_NET_GATEWAY=%s\nAGENTOS_NET_DNS=%s\n' "$iface" "$addr" "$gw" "$dns"
+     for k in ANTHROPIC_API_KEY OPENAI_API_KEY GROK_CODE_XAI_API_KEY CLAUDE_CODE_OAUTH_TOKEN; do
+       v=$(W --title "API keys (optional)" --passwordbox "$k (empty = skip; can be set later with agentos-config)" 10 72) || v=""
+       [ -z "$v" ] || printf '%s=%s\n' "$k" "$v"
+     done
+   } > "$env")
+  clear
+  # A separate process, not (install_from_env ...): inside an if/||/&& condition bash disables errexit AND the
+  # ERR trap, also in subshells, so unchecked failures in the engine would be ignored. A fresh process restores both.
+  if AGENTOS_DD_STATUS=progress "$0" --env "$env" 2>&1 | tee -a "$LOG"; then
+    rm -f "$env"
+    W --msgbox "AgentOS is installed.\n\nRemove the USB stick, then press Enter to reboot." 10 60
+    systemctl reboot
+  else
+    rm -f "$env"
+    W --msgbox "Installation failed:\n\n$(grep 'INSTALL FAILED' "$LOG" | tail -1)\n\nFull log: $LOG (Alt+F2 for a shell)." 14 72
+    return 1
+  fi
+}
+
 case "${1:-}" in
   --auto) auto ;;
   --env)  install_from_env "${2:?usage: agentos-install --env FILE}" ;;
-  *)      echo "usage: agentos-install --auto | --env FILE" >&2; exit 2 ;;
+  --tui)  tui || true ;;
+  *)      echo "usage: agentos-install --auto | --tui | --env FILE" >&2; exit 2 ;;
 esac

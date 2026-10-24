@@ -1,3 +1,4 @@
 enable systemd-networkd.service
 enable systemd-resolved.service
 enable agentos-install-auto.service
+enable getty@tty2.service
