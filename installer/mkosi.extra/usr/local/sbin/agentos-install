@@ -2,7 +2,7 @@
 # AgentOS installer: writes the tested AgentOS disk image to a whole disk and applies settings.
 #   agentos-install --auto        unattended if configured (kernel cmdline URL or AGENTOS partition), else READY
 #   agentos-install --env FILE    install using KEY=VALUE settings from FILE
-set -euo pipefail
+set -Eeuo pipefail  # -E: the ERR trap set in install_from_env also fires in functions and subshells
 . /usr/lib/agentos-installer/lib.sh
 IMG_DIR=/usr/share/agentos
 IMG=$IMG_DIR/agentos.raw.zst
@@ -35,7 +35,7 @@ check_disk() {
 
 cleanup_mounts() {
   local m
-  for m in "$TARGET/proc" "$TARGET/dev" "$TARGET"; do mountpoint -q "$m" && umount "$m"; done
+  for m in "$TARGET/proc" "$TARGET/dev" "$TARGET"; do mountpoint -q "$m" && umount "$m" || true; done
   return 0
 }
 
@@ -66,6 +66,7 @@ install_from_env() {
   # --- write ---
   echo "Writing AgentOS to $disk. Everything on it will be erased."
   ERASED=$disk
+  trap 'die "unexpected error at line $LINENO"' ERR
   wipefs -a "$real" >/dev/null
   # status=progress floods kmsg in --auto mode (carriage-return updates); the TUI sets AGENTOS_DD_STATUS=progress.
   zstd -dc "$IMG" | dd of="$real" bs=4M conv=fsync status="${AGENTOS_DD_STATUS:-none}" ||
@@ -106,7 +107,7 @@ install_from_env() {
   fi
   touch "$TARGET/etc/cloud/cloud-init.disabled"
   sync
-  cleanup_mounts; trap - EXIT
+  cleanup_mounts; trap - EXIT ERR
   echo "AGENTOS INSTALL OK ($disk)"
 }
 
