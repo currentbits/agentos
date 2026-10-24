@@ -92,4 +92,14 @@ printf 'AGENTOS_HOSTNAME=x\n' > "$t/fat2.env"
 [ "$(autoinstall_source "quiet" "$t/missing.env")" = none ] || fail "source none"
 [ "$(autoinstall_source "agentos.autoinstall=https://h/x" "$t/fat.env" | cut -d' ' -f1)" = url ] || fail "url wins over fat"
 
+# disk_in_use: holders on the disk itself or on any of its partitions (LVM/RAID/dm)
+mkdir -p "$t/sys/vda/holders" "$t/sys/vda/vda1/holders" "$t/sys/vda/vda2/holders"
+if disk_in_use "$t/sys/vda"; then fail "disk_in_use: no holders"; fi
+touch "$t/sys/vda/vda2/holders/dm-0"
+disk_in_use "$t/sys/vda" || fail "disk_in_use: partition holder"
+rm "$t/sys/vda/vda2/holders/dm-0"; touch "$t/sys/vda/holders/md0"
+disk_in_use "$t/sys/vda" || fail "disk_in_use: disk holder"
+mkdir -p "$t/sys/nvme0n1/nvme0n1p1/holders"; touch "$t/sys/nvme0n1/nvme0n1p1/holders/dm-1"
+disk_in_use "$t/sys/nvme0n1" || fail "disk_in_use: nvme partition holder"
+
 echo "installer lib OK"

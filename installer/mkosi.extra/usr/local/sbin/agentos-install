@@ -16,11 +16,19 @@ die() { echo "INSTALL FAILED: $*${ERASED:+ ($ERASED was erased; fix the problem 
 boot_disk() { lsblk -no PKNAME "$(findmnt -no SOURCE /)" | head -1; }
 
 check_disk() {
-  local d=$1 real
+  local d=$1 real b
   [ -b "$d" ] || die "$d is not a block device"
   real=$(readlink -f "$d")
   [ "$(lsblk -dno TYPE "$real")" = disk ] || die "$d is not a whole disk"
-  [ "$(basename "$real")" != "$(boot_disk)" ] || die "refusing to install onto the installer's own disk ($d)"
+  b=$(boot_disk) || b=""
+  [ -n "$b" ] || die "cannot determine the installer's own disk; refusing to continue"
+  [ "$(basename "$real")" != "$b" ] || die "refusing to install onto the installer's own disk ($d)"
+  if [ -e "$DATA_DEV" ]; then  # the stick holding agentos.env, even if the installer runs from elsewhere
+    b=$(lsblk -no PKNAME "$(readlink -f "$DATA_DEV")" | head -1) || b=""
+    [ -n "$b" ] || die "cannot determine the disk of the AGENTOS partition; refusing to continue"
+    [ "$(basename "$real")" != "$b" ] || die "refusing to install onto the installer's own disk ($d holds the AGENTOS partition)"
+  fi
+  ! disk_in_use "/sys/class/block/$(basename "$real")" || die "$d is in use (LVM/RAID/dm)"
   [ "$(lsblk -bdno SIZE "$real")" -ge "$MIN_DISK_BYTES" ] || die "$d is smaller than 32 GiB"
   ! lsblk -no MOUNTPOINTS "$real" | grep -q . || die "$d has mounted partitions"
 }

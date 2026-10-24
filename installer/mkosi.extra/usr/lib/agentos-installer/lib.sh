@@ -56,6 +56,13 @@ valid_ssh_pubkey() {
   [[ $1 =~ ^(ssh-(ed25519|rsa)|ecdsa-sha2-nistp(256|384|521)|sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh\.com)\ [A-Za-z0-9+/=]+(\ [^[:cntrl:]]*)?$ ]]
 }
 
+# disk_in_use /sys/class/block/<disk>: true if the disk or any of its partitions has holders (LVM/RAID/dm).
+disk_in_use() {
+  local h
+  for h in "$1"/holders/* "$1/$(basename "$1")"*/holders/*; do [ -e "$h" ] && return 0; done
+  return 1
+}
+
 network_file() {
   printf '[Match]\nName=%s\n\n[Network]\nAddress=%s\nGateway=%s\n' "$1" "$2" "$3"
   local d
