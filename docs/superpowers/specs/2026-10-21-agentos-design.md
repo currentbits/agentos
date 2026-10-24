@@ -183,13 +183,15 @@ If `agent` has no password, no SSH key, and Tailscale is not up, tty1 autologins
 
 ### Live environment
 
-`mkosi.images/installer` builds a minimal live system (generic kernel, firmware, systemd, systemd-repart, grub, whiptail) that embeds the AgentOS root partition (zstd-compressed, ~1.5 GB). Boots straight into `agentos-install` on tty1 (Alt+F2 for a shell).
+`installer/` is a separate mkosi project (built by `tools/build-installer.sh` after the main image) for a minimal live system (generic kernel, firmware, systemd, grub, whiptail) that embeds the whole `agentos.raw` (zstd-compressed, ~1.9 GB payload). Boots straight into `agentos-install` on tty1 (Alt+F2 for a shell).
 
-Packaging: mkosi has no ISO output, but `Format=disk` (+ optionally `ElTorito=yes`) produces one GPT disk image. mkosi documents El Torito as incompatible with grub as BIOS bootloader, so the **installer** image is UEFI-only regardless. That single file `agentos-installer.img` (~2 GB) is written to USB (`dd`, Etcher, Rufus DD mode) and boots UEFI.
+Packaging: mkosi has no ISO output, but `Format=disk` (+ optionally `ElTorito=yes`) produces one GPT disk image. mkosi documents El Torito as incompatible with grub as BIOS bootloader, so the **installer** image is UEFI-only regardless. That single file `agentos-installer.img` (~4 GB) is written to USB (`dd`, Etcher, Rufus DD mode) and boots UEFI.
 
 The **installed system and the VM images** stay hybrid UEFI + BIOS (they carry no El Torito catalog), so BIOS-only clouds and hypervisors still work. `ponytail:` BIOS-only bare metal can't run the installer; `dd` `agentos.raw` to its disk instead. Add a post-build `xorriso` + isolinux step if that's ever needed.
 
-**Known limitation (pending a decision):** `ElTorito=yes` builds fine (and was the original plan, to also support virtual CD / IPMI virtual media), but the resulting CD boot path drops to a GRUB rescue prompt — GRUB's embedded prefix does a GPT/PARTUUID search that can't resolve when the image is presented as CD-ROM media instead of a GPT disk, so it never finds `/grub/grub.cfg`. `ElTorito` is therefore disabled (`ElTorito=no`) and the installer is **USB-only** for now; CI's boot test runs with `SKIP_CD=1`. Revisit if virtual-CD/IPMI-media installs are needed.
+**Known limitation (pending a decision):** `ElTorito=yes` builds fine (and was the original plan, to also support virtual CD / IPMI virtual media), but booted as a CD, GRUB does not find its config or ESP and drops to a rescue prompt (its early config is a `search --file /grub/grub.cfg`). The exact cause was not investigated. `ElTorito` is therefore disabled (`ElTorito=no`) and the installer is **USB-only** for now; CI's boot test runs with `SKIP_CD=1`. Revisit if virtual-CD/IPMI-media installs are needed.
+
+**Boot the installed system in UEFI mode.** Under BIOS/CSM, GRUB's BIOS core image boots the first disk carrying `/grub/grub.cfg`, so another AgentOS disk or the installer stick can take over the boot. Remove the stick after installing.
 
 ### Interactive flow
 
@@ -198,10 +200,10 @@ The **installed system and the VM images** stay hybrid UEFI + BIOS (they carry n
 3. Network — wired DHCP (default) or static IP. Saved as a systemd-networkd config.
 4. Access (skippable) — password for `agent` and/or SSH public key (paste or GitHub username lookup).
 5. Tailscale auth key (skippable).
-6. API keys (skippable).
-7. Local console mode — `headless` (default) or `terminal` (see "Local console" below).
-8. Summary → install:
-   - Verify the embedded image (`sha256sum -c`), wipe the disk, write the tested `agentos.raw` verbatim (`zstd -dc | dd`), move the backup GPT to the disk end (`sgdisk -e`). The result is byte-identical to the VM images: ESP + BIOS boot + root, UEFI and BIOS bootable, Secure Boot via the signed shim; the root partition and filesystem grow at first boot (systemd-repart + x-systemd.growfs).
+6. Local console mode — `headless` (default) or `terminal` (see "Local console" below).
+7. API keys (skippable).
+8. Summary (the last question; nothing is written or erased before it is confirmed) → install:
+   - Verify the embedded image (`sha256sum -c`), wipe the disk, write the tested `agentos.raw` verbatim (`zstd -dc | dd`), move the backup GPT to the disk end (`sgdisk -e`), then give the disk and its partitions new random GUIDs (`sgdisk -G`) and point `root=PARTUUID=` in the ESP's `/grub/grub.cfg` and the root line in `/etc/fstab` at the new root PARTUUID (see "Per-install uniqueness"). Otherwise the result is byte-identical to the VM images: ESP + BIOS boot + root, UEFI and BIOS bootable, Secure Boot via the signed shim; the root partition and filesystem grow at first boot (systemd-repart + x-systemd.growfs).
    - Mount the new root and apply settings with the target's own `agentos-config` (chroot); write the SSH key(s), password hash, optional static networkd file, and `/etc/cloud/cloud-init.disabled`.
    - Reboot.
 
@@ -217,6 +219,9 @@ If an `agentos.env` containing `AGENTOS_INSTALL_DISK=/dev/...` is found (on the 
 - Any failure before the partition step: nothing touched, return to menu.
 - Failure after partitioning: show the error and log path (`/tmp/agentos-install.log`), offer retry; the disk is considered wiped.
 - Disk smaller than 32 GB: refuse.
+- Disk with 4096-byte logical sectors (4K-native): refuse (the image is a 512-byte-sector GPT).
+
+Not covered by automated tests (manual walkthrough or untested): the TUI → engine path (manual walkthrough only), the refusal of a disk holding the `AGENTOS` partition, the mounted-disk refusal, the GitHub SSH key fetch, URL autoinstall (`agentos.autoinstall=`), and the CD boot path (disabled).
 
 ## 5. Build, test, update
 
@@ -271,6 +276,7 @@ Every install and every VM from the same image must not share identity:
 - `/etc/agentos/mcp-token` absent in the image (build fails otherwise) → generated at first boot.
 - SSH host keys removed at build (`RemoveFiles=/etc/ssh/ssh_host_*`); `agentos-ssh-keygen.service` runs `ssh-keygen -A` before sshd starts when no host key exists.
 - No Tailscale state in the image (`/var/lib/tailscale` empty); systemd random seed not shipped.
+- Disk and partition GUIDs: every install from the installer gets new random disk and partition GUIDs (`sgdisk -G`), and the installer rewrites `root=PARTUUID=` in the ESP's grub config and the root line of `/etc/fstab` to match. Two AgentOS disks in one machine therefore never share a root PARTUUID. (VM images made from `agentos.raw` directly keep the image's GUIDs.)
 - No CLI login state in the image: CI asserts `~agent/.claude*`, `~agent/.codex/auth.json`, grok and opencode auth files don't exist.
 
 ### Network exposure
@@ -297,7 +303,7 @@ Every install and every VM from the same image must not share identity:
 
 - `agentos.env` and `secrets.env` are 0600. `TS_AUTHKEY` is deleted after use; the MCP token is root-only.
 - API keys are inherently readable by a hijacked agent. Mitigation is outside the OS: use **dedicated, spend-capped keys per AgentOS box** (Anthropic/OpenAI/xAI consoles all support per-key limits). `agentos-config` says so when you enter keys.
-- In unattended installs the config with secrets stays on the USB stick: the installer prints a warning to wipe or remove `agentos.env` from the `AGENTOS` partition afterwards.
+- After an unattended install from the stick, the installer deletes `agentos.env` (secrets) from its `AGENTOS` partition (`shred -u`, best effort on flash), and powers off instead of rebooting if the delete fails. URL-sourced installs (`agentos.autoinstall=`) power off instead of rebooting, since the kernel command line would install again.
 
 ### Updates and patching
 
@@ -326,7 +332,7 @@ LUKS with TPM2 unlock; an egress allowlist mode (agent may reach only LLM APIs, 
 
 - **Grok**: xAI's official Grok Build (`grok`, Apache-2.0, `xai-org/grok-build`), latest release via `https://x.ai/cli/install.sh`; headless auth via `GROK_CODE_XAI_API_KEY`.
 - **Image size**: targeted firmware instead of `firmware-linux`, Rust `minimal` profile, doc/locale stripping; 7 GB budget (raised from 4.5 GB after measuring).
-- **ISO**: mkosi `Format=disk` + `ElTorito=yes`, one `.img` for USB and virtual CD, UEFI-only (El Torito and grub-BIOS are mutually exclusive in mkosi). Installed systems and VM images remain UEFI + BIOS. No separate ISO tooling.
+- **ISO**: mkosi `Format=disk`, one UEFI-only `.img` for USB (El Torito and grub-BIOS are mutually exclusive in mkosi). CD boot (`ElTorito=yes`) is currently disabled: booted as a CD, GRUB does not find its config or ESP and drops to a rescue prompt; the cause was not investigated (Section 4). Installed systems and VM images remain UEFI + BIOS. No separate ISO tooling.
 
 ## Open items to resolve during planning
 

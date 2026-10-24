@@ -59,7 +59,7 @@ done
   echo
   if [ -n "$INSTALLER" ]; then
     echo "agentos-installer-$VER.img.zst: decompress (zstd -d), then write the .img to a USB stick"
-    echo "(dd, Etcher or Rufus DD mode) or attach it as a virtual CD (UEFI)."
+    echo "(dd, Etcher or Rufus DD mode) and boot it in UEFI mode. USB only: it does not boot as a (virtual) CD."
     echo
   fi
   if (( ${#split_files[@]} > 0 )); then
