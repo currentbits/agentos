@@ -20,7 +20,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
-ssh-keygen -q -t ed25519 -N '' -f "$WORK/key"
+if [ -n "${SMOKE_KEY:-}" ]; then
+  cp "$SMOKE_KEY" "$WORK/key"; chmod 600 "$WORK/key"; ssh-keygen -y -f "$WORK/key" > "$WORK/key.pub"
+else
+  ssh-keygen -q -t ed25519 -N '' -f "$WORK/key"
+fi
 
 cat > "$WORK/user-data" <<EOF
 #cloud-config
@@ -68,12 +72,16 @@ boot() {  # boot <mode> <port>
   export PORT HOSTPORT_HTTP HOSTPORT_NOVNC HOSTPORT_MCP MODE=$mode
   printf 'instance-id: smoke-%s-%s\n' "$mode" "$RANDOM" > "$WORK/meta-data"
   local seed=()
-  if [[ $mode != *-noseed ]]; then
+  if [[ $mode != *-noseed && ${SMOKE_NOSEED:-0} != 1 ]]; then
     cloud-localds "$WORK/seed-$mode.iso" "$WORK/user-data" "$WORK/meta-data"
     seed=(-drive "file=$WORK/seed-$mode.iso,media=cdrom")
   fi
-  qemu-img convert -O qcow2 "$IMG" "$WORK/disk-$mode.qcow2"
-  qemu-img resize -q "$WORK/disk-$mode.qcow2" 40G
+  if [ -n "${SMOKE_DISK:-}" ]; then
+    qemu-img create -q -f qcow2 -b "$(realpath "$SMOKE_DISK")" -F qcow2 "$WORK/disk-$mode.qcow2"
+  else
+    qemu-img convert -O qcow2 "$IMG" "$WORK/disk-$mode.qcow2"
+    qemu-img resize -q "$WORK/disk-$mode.qcow2" 40G
+  fi
   local fw=()
   if [[ $mode == uefi* ]]; then
     cp "$OVMF_VARS" "$WORK/vars.fd"
@@ -110,7 +118,9 @@ run_checks() {
     # shellcheck source=/dev/null
     . "$f"
   done
-  for fn in $(declare -F | awk '{print $3}' | grep "^$prefix" | sort); do
+  local pattern="^$prefix"
+  [[ -n ${SMOKE_DISK:-} && $prefix == check_ ]] && pattern="^(check_|installed_)"
+  for fn in $(declare -F | awk '{print $3}' | grep -E "$pattern" | sort); do
     if out=$("$fn" 2>&1); then echo "PASS [$MODE] $fn"
     else echo "FAIL [$MODE] $fn"; echo "$out" | sed 's/^/    /'; FAILS=$((FAILS + 1)); fi
   done

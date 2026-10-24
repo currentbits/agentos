@@ -1,8 +1,106 @@
 #!/bin/bash
-# AgentOS installer. Task 2 version: --auto detects unattended config and otherwise reports READY.
+# AgentOS installer: writes the tested AgentOS disk image to a whole disk and applies settings.
+#   agentos-install --auto        unattended if configured (kernel cmdline URL or AGENTOS partition), else READY
+#   agentos-install --env FILE    install using KEY=VALUE settings from FILE
 set -euo pipefail
 . /usr/lib/agentos-installer/lib.sh
+IMG_DIR=/usr/share/agentos
+IMG=$IMG_DIR/agentos.raw.zst
 DATA_DEV=/dev/disk/by-partlabel/AGENTOS
+TARGET=/mnt/target
+LOG=/tmp/agentos-install.log
+
+# ERASED is set once writing starts, so every later failure says the disk was erased.
+die() { echo "INSTALL FAILED: $*${ERASED:+ ($ERASED was erased; fix the problem and run the installer again)}" >&2; exit 1; }
+
+boot_disk() { lsblk -no PKNAME "$(findmnt -no SOURCE /)" | head -1; }
+
+check_disk() {
+  local d=$1 real
+  [ -b "$d" ] || die "$d is not a block device"
+  real=$(readlink -f "$d")
+  [ "$(lsblk -dno TYPE "$real")" = disk ] || die "$d is not a whole disk"
+  [ "$(basename "$real")" != "$(boot_disk)" ] || die "refusing to install onto the installer's own disk ($d)"
+  [ "$(lsblk -bdno SIZE "$real")" -ge "$MIN_DISK_BYTES" ] || die "$d is smaller than 32 GiB"
+  ! lsblk -no MOUNTPOINTS "$real" | grep -q . || die "$d has mounted partitions"
+}
+
+cleanup_mounts() {
+  local m
+  for m in "$TARGET/proc" "$TARGET/dev" "$TARGET"; do mountpoint -q "$m" && umount "$m"; done
+  return 0
+}
+
+install_from_env() {
+  local parsed disk real root line k v ghkeys=""
+  parsed=$(parse_env "$1") || die "invalid settings file $1"
+  get() { printf '%s\n' "$parsed" | env_value "$1"; }
+
+  # --- validate everything before touching any disk ---
+  disk=$(get AGENTOS_INSTALL_DISK); [ -n "$disk" ] || die "AGENTOS_INSTALL_DISK is not set"
+  check_disk "$disk"; real=$(readlink -f "$disk")
+  v=$(get AGENTOS_HOSTNAME);      [ -z "$v" ] || valid_hostname "$v"      || die "invalid AGENTOS_HOSTNAME"
+  v=$(get AGENTOS_SSH_KEY);       [ -z "$v" ] || valid_ssh_pubkey "$v"    || die "invalid AGENTOS_SSH_KEY"
+  v=$(get AGENTOS_PASSWORD_HASH); [ -z "$v" ] || valid_password_hash "$v" || die "AGENTOS_PASSWORD_HASH must be a \$6\$ or \$y\$ crypt hash (openssl passwd -6)"
+  if [ -n "$(get AGENTOS_NET_ADDRESS)" ]; then
+    valid_iface "$(get AGENTOS_NET_IFACE)" && valid_cidr "$(get AGENTOS_NET_ADDRESS)" &&
+      valid_ipv4 "$(get AGENTOS_NET_GATEWAY)" || die "invalid static network settings (AGENTOS_NET_*)"
+    for v in $(get AGENTOS_NET_DNS | tr ',' ' '); do valid_ipv4 "$v" || die "invalid DNS server $v"; done
+  fi
+  v=$(get AGENTOS_GITHUB_USER)
+  if [ -n "$v" ]; then
+    [[ $v =~ ^[A-Za-z0-9-]{1,39}$ ]] || die "invalid AGENTOS_GITHUB_USER"
+    ghkeys=$(curl -fsS --max-time 20 "https://github.com/$v.keys") || die "could not fetch SSH keys for GitHub user $v"
+  fi
+  echo "Verifying the AgentOS image on this stick..."
+  (cd "$IMG_DIR" && sha256sum -c --quiet agentos.raw.zst.sha256) || die "the installer image is corrupt; re-flash the stick. Nothing was changed."
+
+  # --- write ---
+  echo "Writing AgentOS to $disk. Everything on it will be erased."
+  ERASED=$disk
+  wipefs -a "$real" >/dev/null
+  # status=progress floods kmsg in --auto mode (carriage-return updates); the TUI sets AGENTOS_DD_STATUS=progress.
+  zstd -dc "$IMG" | dd of="$real" bs=4M conv=fsync status="${AGENTOS_DD_STATUS:-none}" ||
+    die "writing the image failed"
+  sgdisk -e "$real" >/dev/null || die "could not move the backup GPT to the end of $disk"
+  partx -u "$real" 2>/dev/null || true
+  udevadm settle
+  root=""
+  for _ in $(seq 1 20); do
+    root=$(lsblk -lnpo NAME,PARTLABEL "$real" | awk -v l="$ROOT_PARTLABEL" '$2==l{print $1}')
+    [ -n "$root" ] && break
+    sleep 0.5; udevadm settle
+  done
+  [ -n "$root" ] || die "root partition not found on $disk after writing"
+
+  # --- configure the new system via its own agentos-config ---
+  trap cleanup_mounts EXIT
+  mkdir -p "$TARGET"; mount "$root" "$TARGET"
+  mount --bind /dev "$TARGET/dev"; mount -t proc proc "$TARGET/proc"
+  install -d -m 711 "$TARGET/etc/agentos"  # normally created by agentos-firstboot; agentos-config set needs it now
+  while IFS= read -r line; do
+    k=${line%%=*}; v=${line#*=}
+    is_installer_key "$k" && continue
+    [ -n "$v" ] || continue
+    chroot "$TARGET" /usr/local/bin/agentos-config set "$k" "$v" >/dev/null || die "could not apply $k"
+  done <<< "$parsed"
+  v=$(get AGENTOS_SSH_KEY)
+  [ -z "$v" ] || chroot "$TARGET" /usr/local/bin/agentos-config add-ssh-key "$v" || die "could not add AGENTOS_SSH_KEY"
+  while IFS= read -r k; do
+    [ -n "$k" ] && valid_ssh_pubkey "$k" || continue
+    chroot "$TARGET" /usr/local/bin/agentos-config add-ssh-key "$k" || die "could not add a GitHub key"
+  done <<< "$ghkeys"
+  v=$(get AGENTOS_PASSWORD_HASH)
+  [ -z "$v" ] || usermod -R "$TARGET" -p "$v" agent || die "could not set the password"
+  if [ -n "$(get AGENTOS_NET_ADDRESS)" ]; then
+    network_file "$(get AGENTOS_NET_IFACE)" "$(get AGENTOS_NET_ADDRESS)" "$(get AGENTOS_NET_GATEWAY)" "$(get AGENTOS_NET_DNS)" \
+      > "$TARGET/etc/systemd/network/10-agentos-static.network"
+  fi
+  touch "$TARGET/etc/cloud/cloud-init.disabled"
+  sync
+  cleanup_mounts; trap - EXIT
+  echo "AGENTOS INSTALL OK ($disk)"
+}
 
 auto() {
   local fat="" src
@@ -10,16 +108,31 @@ auto() {
   if [ -e "$DATA_DEV" ] && mount -o ro "$DATA_DEV" /run/agentos-data 2>/dev/null; then
     fat=/run/agentos-data/agentos.env
   fi
-  src=$(autoinstall_source "$(cat /proc/cmdline)" "$fat") || { echo "INSTALL FAILED: invalid autoinstall settings" >&2; exit 1; }
-  if [ "$src" = none ]; then
-    echo "AGENTOS-INSTALLER READY (interactive)"
-    return 0
+  src=$(autoinstall_source "$(cat /proc/cmdline)" "$fat") || die "invalid autoinstall settings on the kernel command line"
+  # shellcheck disable=SC2086  # deliberate word splitting of "kind arg [sha]"
+  set -- $src
+  case $1 in
+    none) echo "AGENTOS-INSTALLER READY (interactive)"; return 0 ;;
+    file) install -m 600 "$2" /run/agentos-install.env ;;
+    url)
+      (umask 077; curl -fsS --proto =https --tlsv1.2 --retry 5 --max-time 60 -o /run/agentos-install.env "$2") ||
+        die "could not download $2"
+      if [ -n "${3:-}" ]; then
+        echo "$3  /run/agentos-install.env" | sha256sum -c --quiet || die "autoinstall file does not match agentos.autoinstall_sha256"
+      fi ;;
+  esac
+  install_from_env /run/agentos-install.env 2>&1 | tee -a "$LOG"
+  [ "${PIPESTATUS[0]}" -eq 0 ] || exit 1
+  [ "$1" = file ] && echo "Remove the stick, then wipe agentos.env from its AGENTOS partition: it may contain secrets."
+  if [ "$(parse_env /run/agentos-install.env | env_value AGENTOS_INSTALL_POWEROFF)" = 1 ]; then
+    systemctl poweroff
+  else
+    systemctl reboot
   fi
-  echo "unattended install not implemented yet ($src)" >&2
-  exit 1
 }
 
 case "${1:-}" in
   --auto) auto ;;
-  *) echo "usage: agentos-install --auto" >&2; exit 2 ;;
+  --env)  install_from_env "${2:?usage: agentos-install --env FILE}" ;;
+  *)      echo "usage: agentos-install --auto | --env FILE" >&2; exit 2 ;;
 esac

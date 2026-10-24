@@ -20,9 +20,10 @@ check_no_autologin_when_key_present() {
   vm 'sudo agentos-console-apply && test ! -e /etc/systemd/system/getty@tty1.service.d/agentos.conf'
 }
 check_autologin_when_no_access() {
-  vm 'mv ~/.ssh/authorized_keys ~/.ssh/ak.bak
+  # A password also counts as access (installer-written disks have one): lock it, restore the exact hash after.
+  vm 'mv ~/.ssh/authorized_keys ~/.ssh/ak.bak; h=$(sudo getent shadow agent | cut -d: -f2); sudo usermod -p "!" agent
       sudo agentos-console-apply; r=0; test -e /etc/systemd/system/getty@tty1.service.d/agentos.conf || r=1
-      mv ~/.ssh/ak.bak ~/.ssh/authorized_keys; sudo agentos-console-apply
+      sudo usermod -p "$h" agent; mv ~/.ssh/ak.bak ~/.ssh/authorized_keys; sudo agentos-console-apply
       test ! -e /etc/systemd/system/getty@tty1.service.d/agentos.conf && exit $r'
 }
 check_terminal_mode_profile() { vm 'grep -q "cage -- foot" /etc/profile.d/agentos.sh && ! grep -q "exec cage" /etc/profile.d/agentos.sh && command -v cage && command -v foot'; }
@@ -54,11 +55,11 @@ check_issue_banner()        { vm 'grep -q "agentos-config" /etc/issue'; }
 # and tty1's VT output is not mirrored to the serial console this harness captures): assert the
 # getty@tty1 drop-in content and that systemd actually wires it to agentos-config-tty.
 check_autologin_dropin_wired_to_config_tty() {
-  vm 'mv ~/.ssh/authorized_keys ~/.ssh/ak.bak
+  vm 'mv ~/.ssh/authorized_keys ~/.ssh/ak.bak; h=$(sudo getent shadow agent | cut -d: -f2); sudo usermod -p "!" agent
       sudo agentos-console-apply
       sudo grep -qF "/usr/local/sbin/agentos-config-tty" /etc/systemd/system/getty@tty1.service.d/agentos.conf
       r=$?
       sudo systemctl cat getty@tty1.service | grep -qF "/usr/local/sbin/agentos-config-tty" || r=1
-      mv ~/.ssh/ak.bak ~/.ssh/authorized_keys; sudo agentos-console-apply
+      sudo usermod -p "$h" agent; mv ~/.ssh/ak.bak ~/.ssh/authorized_keys; sudo agentos-console-apply
       exit $r'
 }
