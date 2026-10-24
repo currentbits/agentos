@@ -9,6 +9,8 @@ IMG_DIR=/usr/share/agentos
 IMG=$IMG_DIR/agentos.raw.zst
 DATA_DEV=/dev/disk/by-partlabel/AGENTOS
 TARGET=/mnt/target
+TARGET_ESP=/mnt/target-esp
+ESP_PARTTYPE=c12a7328-f81f-11d2-ba4b-00a0c93ec93b
 LOG=/tmp/agentos-install.log
 
 # ERASED is set once writing starts, so every later failure says the disk was erased.
@@ -31,17 +33,20 @@ check_disk() {
   fi
   ! disk_in_use "/sys/class/block/$(basename "$real")" || die "$d is in use (LVM/RAID/dm)"
   [ "$(lsblk -bdno SIZE "$real")" -ge "$MIN_DISK_BYTES" ] || die "$d is smaller than 32 GiB"
+  # agentos.raw is a 512-byte-sector GPT image: on a 4Kn disk its partition table would be unreadable.
+  b=$(lsblk -dno LOG-SEC "$real" | tr -d ' ') || b=""
+  [ "$b" = 512 ] || die "$d has $b-byte logical sectors (4K-native); not supported. The disk was not touched."
   ! lsblk -no MOUNTPOINTS "$real" | grep -q . || die "$d has mounted partitions"
 }
 
 cleanup_mounts() {
   local m
-  for m in "$TARGET/proc" "$TARGET/dev" "$TARGET"; do mountpoint -q "$m" && umount "$m" || true; done
+  for m in "$TARGET_ESP" "$TARGET/proc" "$TARGET/dev" "$TARGET"; do mountpoint -q "$m" && umount "$m" || true; done
   return 0
 }
 
 install_from_env() {
-  local parsed disk real root line k v ghkeys=""
+  local parsed disk real root esp old new p line k v ghkeys=""
   parsed=$(parse_env "$1") || die "invalid settings file $1"
   get() { printf '%s\n' "$parsed" | env_value "$1"; }
 
@@ -69,6 +74,8 @@ install_from_env() {
   ERASED=$disk
   # From here the ERR trap fires inside $(...) too: add no substitutions whose failure is expected (or guard them with ||).
   trap 'die "unexpected error at line $LINENO"' ERR
+  # Partition signatures first: the whole-disk wipefs only clears the disk's own (GPT/MBR) ones.
+  for p in $(lsblk -lnpo NAME,TYPE "$real" | awk '$2=="part"{print $1}'); do wipefs -a "$p" >/dev/null; done
   wipefs -a "$real" >/dev/null
   # status=progress floods kmsg in --auto mode (carriage-return updates); the TUI sets AGENTOS_DD_STATUS=progress.
   zstd -dc "$IMG" | dd of="$real" bs=4M conv=fsync status="${AGENTOS_DD_STATUS:-none}" ||
@@ -84,9 +91,23 @@ install_from_env() {
   done
   [ -n "$root" ] || die "root partition not found on $disk after writing"
 
-  # --- configure the new system via its own agentos-config ---
+  # --- per-install identity: every install from the same image would share its disk/partition GUIDs ---
+  old=$(blkid -p -s PART_ENTRY_UUID -o value "$root") || die "could not read the root PARTUUID"
+  sgdisk -G "$real" >/dev/null || die "could not give $disk new GUIDs"
+  partx -u "$real" 2>/dev/null || true
+  udevadm settle || true
+  new=$(blkid -p -s PART_ENTRY_UUID -o value "$root") || die "could not read the new root PARTUUID"
+  [ -n "$new" ] && [ "$new" != "$old" ] || die "the root PARTUUID did not change"
+  esp=$(lsblk -lnpo NAME,PARTTYPE "$real" | awk -v t="$ESP_PARTTYPE" '$2==t{print $1}')
+  [ -n "$esp" ] && [ "$(wc -l <<< "$esp")" = 1 ] || die "ESP not found on $disk"
   trap cleanup_mounts EXIT
+  mkdir -p "$TARGET_ESP"; mount "$esp" "$TARGET_ESP"
+  rewrite_root_partuuid "$TARGET_ESP" "$old" "$new" || die "could not update root=PARTUUID in the boot config"
+  umount "$TARGET_ESP"
+
+  # --- configure the new system via its own agentos-config ---
   mkdir -p "$TARGET"; mount "$root" "$TARGET"
+  fstab_root_partuuid "$TARGET/etc/fstab" "$new" || die "could not update the root entry in /etc/fstab"
   mount --bind /dev "$TARGET/dev"; mount -t proc proc "$TARGET/proc"
   install -d -m 711 "$TARGET/etc/agentos"  # normally created by agentos-firstboot; agentos-config set needs it now
   while IFS= read -r line; do
@@ -114,9 +135,13 @@ install_from_env() {
 }
 
 auto() {
-  local fat="" src
+  local fat="" src b
+  trap 'rm -f /run/agentos-install.env' EXIT  # holds secrets: never leave it behind, also on failure
   mkdir -p /run/agentos-data
-  if [ -e "$DATA_DEV" ] && mount -o ro "$DATA_DEV" /run/agentos-data 2>/dev/null; then
+  # Only the AGENTOS partition of the stick we booted from: another stick's agentos.env must not trigger an erase.
+  b=$(boot_disk 2>/dev/null) || b=""
+  if [ -n "$b" ] && [ -e "$DATA_DEV" ] && [ "$(lsblk -no PKNAME "$(readlink -f "$DATA_DEV")" | head -1)" = "$b" ] &&
+     mount -o ro "$DATA_DEV" /run/agentos-data 2>/dev/null; then
     fat=/run/agentos-data/agentos.env
   fi
   src=$(autoinstall_source "$(cat /proc/cmdline)" "$fat") || die "invalid autoinstall settings on the kernel command line"
@@ -127,7 +152,7 @@ auto() {
     file) install -m 600 "$2" /run/agentos-install.env ;;
     url)
       (umask 077; curl -fsS --proto =https --tlsv1.2 --retry 5 --max-time 60 -o /run/agentos-install.env "$2") ||
-        die "could not download $2"
+        die "could not download the autoinstall file from $(url_host "$2")"
       if [ -n "${3:-}" ]; then
         echo "$3  /run/agentos-install.env" | sha256sum -c --quiet || die "autoinstall file does not match agentos.autoinstall_sha256"
       fi ;;
@@ -139,7 +164,7 @@ auto() {
   rm -f /run/agentos-install.env
   if [ "$1" = file ]; then
     # Delete the settings (secrets) from the stick; left in place they would also reinstall on every boot.
-    if mount -o remount,rw /run/agentos-data && rm -f "$fat" && sync -f /run/agentos-data; then
+    if mount -o remount,rw /run/agentos-data && shred -u "$fat" && sync -f /run/agentos-data; then
       echo "agentos.env deleted from the stick's AGENTOS partition."
     else
       echo "Could not delete agentos.env from the stick's AGENTOS partition: powering off instead of rebooting," \

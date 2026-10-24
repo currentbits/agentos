@@ -69,6 +69,31 @@ network_file() {
   for d in ${4//,/ }; do printf 'DNS=%s\n' "$d"; done
 }
 
+# url_host <url>: host[:port] only; the path/query of an autoinstall URL may carry a secret.
+url_host() { local h=${1#*://}; printf '%s' "${h%%[/?#]*}"; }
+
+valid_uuid() { [[ $1 =~ ^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$ ]]; }
+
+# rewrite_root_partuuid <esp-dir> <old> <new>: point root=PARTUUID in every text config on the ESP
+# (mkosi: /grub/grub.cfg; EFI/*/grub.cfg only chains to it) at <new>. Fails unless every
+# root=PARTUUID= found is exactly <old>.
+rewrite_root_partuuid() {
+  local f files
+  valid_uuid "$2" && valid_uuid "$3" || { echo "not a lowercase UUID: $2 / $3" >&2; return 1; }
+  files=$(grep -rlI -e 'root=PARTUUID=' "$1") || { echo "no root=PARTUUID= under $1" >&2; return 1; }
+  while IFS= read -r f; do
+    ! grep -o 'root=PARTUUID=[^[:space:]]*' "$f" | grep -qvxF "root=PARTUUID=$2" ||
+      { echo "$f: root=PARTUUID= is not $2" >&2; return 1; }
+    sed -i "s/root=PARTUUID=$2/root=PARTUUID=$3/g" "$f"
+  done <<< "$files"
+}
+
+# fstab_root_partuuid <fstab> <new>: mount / by this install's PARTUUID, not the label every AgentOS disk shares.
+fstab_root_partuuid() {
+  grep -q "^PARTLABEL=${ROOT_PARTLABEL}[[:space:]]" "$1" || { echo "$1: no PARTLABEL=$ROOT_PARTLABEL line" >&2; return 1; }
+  sed -i "s/^PARTLABEL=$ROOT_PARTLABEL\([[:space:]]\)/PARTUUID=$2\1/" "$1"
+}
+
 autoinstall_source() {
   local url sha
   if url=$(cmdline_get agentos.autoinstall "$1"); then

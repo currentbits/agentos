@@ -102,4 +102,31 @@ disk_in_use "$t/sys/vda" || fail "disk_in_use: disk holder"
 mkdir -p "$t/sys/nvme0n1/nvme0n1p1/holders"; touch "$t/sys/nvme0n1/nvme0n1p1/holders/dm-1"
 disk_in_use "$t/sys/nvme0n1" || fail "disk_in_use: nvme partition holder"
 
+# url_host: download errors show only the host (the path/query may carry a secret)
+[ "$(url_host "https://h.example:8443/a/b.env?token=s3cret#x")" = "h.example:8443" ] || fail url_host
+[ "$(url_host "https://h.example?token=s3cret")" = "h.example" ] || fail "url_host query without path"
+
+# rewrite_root_partuuid: per-install root PARTUUID in the ESP's grub config(s)
+old=9e5d1375-3ecc-451f-a377-ef0275d46c26 new=0b7a2f0e-1111-4222-8333-444455556666
+mkdir -p "$t/esp/grub" "$t/esp/EFI/debian"
+printf 'configfile /grub/grub.cfg\n' > "$t/esp/EFI/debian/grub.cfg"
+printf 'menuentry "a" {\n    linux /vmlinuz root=PARTUUID=%s console=ttyS0\n}\n' "$old" > "$t/esp/grub/grub.cfg"
+printf '\0binary root=PARTUUID=%s\n' "$old" > "$t/esp/initrd"
+rewrite_root_partuuid "$t/esp" "$old" "$new" || fail "rewrite_root_partuuid"
+grep -qF "root=PARTUUID=$new console=ttyS0" "$t/esp/grub/grub.cfg" || fail "rewrite_root_partuuid: new value"
+if grep -qF "$old" "$t/esp/grub/grub.cfg"; then fail "rewrite_root_partuuid: old value left"; fi
+[ "$(cat "$t/esp/EFI/debian/grub.cfg")" = "configfile /grub/grub.cfg" ] || fail "rewrite_root_partuuid touched the early config"
+grep -qaF "$old" "$t/esp/initrd" || fail "rewrite_root_partuuid edited a binary file"
+# a second run finds $new, not $old: must fail, not silently succeed
+if rewrite_root_partuuid "$t/esp" "$old" "$new" 2>/dev/null; then fail "rewrite_root_partuuid accepted a config without the old value"; fi
+rm -rf "$t/esp/grub"
+if rewrite_root_partuuid "$t/esp" "$old" "$new" 2>/dev/null; then fail "rewrite_root_partuuid accepted an ESP without root=PARTUUID"; fi
+if rewrite_root_partuuid "$t/esp" "$old" 'x/;s' 2>/dev/null; then fail "rewrite_root_partuuid accepted a non-UUID"; fi
+
+# fstab_root_partuuid
+printf '# Root is mounted by the initrd\nPARTLABEL=root-x86-64  /  ext4  defaults,x-systemd.growfs  0  0\n' > "$t/fstab"
+fstab_root_partuuid "$t/fstab" "$new" || fail fstab_root_partuuid
+grep -qx "PARTUUID=$new  /  ext4  defaults,x-systemd.growfs  0  0" "$t/fstab" || fail "fstab_root_partuuid line"
+if fstab_root_partuuid "$t/fstab" "$new" 2>/dev/null; then fail "fstab_root_partuuid accepted fstab without the PARTLABEL line"; fi
+
 echo "installer lib OK"

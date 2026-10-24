@@ -10,6 +10,10 @@ WORK=$(mktemp -d); trap 'pkill -F "$WORK/q.pid" 2>/dev/null || true; [ "${KEEP_W
 FAILS=0
 ssh-keygen -q -t ed25519 -N '' -f "$WORK/key"
 HASH=$(openssl passwd -6 -stdin <<< 'agentos-test-password')
+# The pristine image's root PARTUUID: installed_root_partuuid_unique checks the install got its own GUIDs.
+RAW=${AGENTOS_RAW:-$(dirname "$INST")/agentos.raw}
+ORIG=$(partx -g -o UUID,NAME "$RAW" | awk '$2=="root-x86-64"{print $1}')
+[ -n "$ORIG" ] || { echo "no root-x86-64 partition in $RAW (set AGENTOS_RAW)" >&2; exit 1; }
 
 # installer stick with agentos.env on its AGENTOS partition
 stick() {  # stick <env-file> -> $WORK/stick.raw
@@ -27,7 +31,7 @@ run_installer() {  # run_installer <target.qcow2> <marker> <timeout-s>: boot unt
   qemu-system-x86_64 -machine q35 -enable-kvm -cpu host -m 2048 -smp 2 \
     -drive "if=pflash,format=raw,readonly=on,file=$OVMF_CODE" -drive "if=pflash,format=raw,file=$WORK/vars.fd" \
     -drive "file=$WORK/stick.raw,format=raw,if=none,id=stick" -device virtio-blk-pci,drive=stick,serial=agentos-stick \
-    -drive "file=$1,format=qcow2,if=none,id=tgt" -device virtio-blk-pci,drive=tgt,serial=agentos-target \
+    -drive "file=$1,format=qcow2,if=none,id=tgt,detect-zeroes=on" -device "virtio-blk-pci,drive=tgt,serial=agentos-target${TGT_OPTS:-}" \
     -nic user,model=virtio-net-pci -display none -serial "file:$WORK/serial.log" -no-reboot \
     -daemonize -pidfile "$WORK/q.pid"
   for _ in $(seq 1 "$3"); do
@@ -63,7 +67,14 @@ qemu-img create -q -f qcow2 "$WORK/t3.qcow2" 40G
 expect refuses_bad_ssh_key run_installer "$WORK/t3.qcow2" "invalid AGENTOS_SSH_KEY" 300
 expect bad_settings_untouched untouched "$WORK/t3.qcow2"
 
-# 4. the real install
+# 4. refuses a 4K-native disk (agentos.raw is a 512-byte-sector GPT image)
+printf 'AGENTOS_INSTALL_DISK=/dev/disk/by-id/virtio-agentos-target\n' > "$WORK/env"; stick "$WORK/env"
+qemu-img create -q -f qcow2 "$WORK/t4.qcow2" 40G
+TGT_OPTS=,logical_block_size=4096,physical_block_size=4096 \
+  expect refuses_4kn_disk run_installer "$WORK/t4.qcow2" "4K-native); not supported. The disk was not touched." 300
+expect 4kn_disk_untouched untouched "$WORK/t4.qcow2"
+
+# 5. the real install
 cat > "$WORK/env" <<EOF
 AGENTOS_INSTALL_DISK=/dev/disk/by-id/virtio-agentos-target
 AGENTOS_INSTALL_POWEROFF=1
@@ -88,6 +99,6 @@ expect fat_env_deleted_message grep -q "agentos.env deleted" "$WORK/serial.log"
 
 if [ "$FAILS" -ne 0 ]; then echo "$FAILS FAILURE(S) before smoke"; exit 1; fi
 
-# 5. full smoke suite on the installed disk, booted UEFI and BIOS
-SMOKE_DISK="$WORK/target.qcow2" SMOKE_KEY="$WORK/key" SMOKE_NOSEED=1 "$HERE/smoke.sh" "$INST" uefi bios
+# 6. full smoke suite on the installed disk, booted UEFI and BIOS
+SMOKE_ORIG_PARTUUID=$ORIG SMOKE_DISK="$WORK/target.qcow2" SMOKE_KEY="$WORK/key" SMOKE_NOSEED=1 "$HERE/smoke.sh" "$INST" uefi bios
 echo "INSTALL TEST OK"
