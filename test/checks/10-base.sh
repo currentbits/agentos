@@ -25,3 +25,4 @@ noseed_root_grown() {
   local g; g=$(qga 'df --output=size -BG / | tail -1 | tr -dc 0-9')
   echo "root size: ${g}G (want >= 35)"; [ "$g" -ge 35 ]
 }
+check_audit_off()         { vm 'grep -qw audit=0 /proc/cmdline'; }  # kauditd_printk_skb lines flood the console otherwise
