@@ -15,7 +15,7 @@ A minimal, headless Linux OS whose only job is to run AI coding agents (Claude C
 |---|---|
 | Base | Debian 13 (trixie), amd64 |
 | Build tool | mkosi (declarative, builds without booting a VM; must run on Linux — CI or a Linux VM) |
-| Outputs | `agentos.raw`, `.qcow2` (Proxmox/Unraid/KVM/OpenStack), `.vhdx` (Hyper-V), `.vmdk` (VMware), `agentos-installer.img` (bare metal: USB, or virtual CD via El Torito) |
+| Outputs | `agentos.raw`, `.qcow2` (Proxmox/Unraid/KVM/OpenStack), `.vhdx` (Hyper-V), `.vmdk` (VMware), `agentos-installer.img` (bare metal, USB only — see "Live environment" for the virtual-CD limitation) |
 | Kernel | Generic `linux-image-amd64` + microcode + NIC firmware only (real hardware + all hypervisors) |
 | Boot | GRUB hybrid UEFI + BIOS, Debian signed shim (Secure Boot works) |
 | Agent CLIs | Baked in at build, installed per-user so their own updaters work |
@@ -185,11 +185,11 @@ If `agent` has no password, no SSH key, and Tailscale is not up, tty1 autologins
 
 `mkosi.images/installer` builds a minimal live system (generic kernel, firmware, systemd, systemd-repart, grub, whiptail) that embeds the AgentOS root partition (zstd-compressed, ~1.5 GB). Boots straight into `agentos-install` on tty1 (Alt+F2 for a shell).
 
-Packaging: mkosi has no ISO output, but `Format=disk` + `ElTorito=yes` produces one GPT disk image that also carries an El Torito boot catalog. mkosi documents El Torito as incompatible with grub as BIOS bootloader, so the **installer** image is UEFI-only. That single file `agentos-installer.img` (~2 GB):
-- written to USB (`dd`, Etcher, Rufus DD mode): boots UEFI;
-- attached as a virtual CD / IPMI virtual media (renamed `.iso`): boots UEFI.
+Packaging: mkosi has no ISO output, but `Format=disk` (+ optionally `ElTorito=yes`) produces one GPT disk image. mkosi documents El Torito as incompatible with grub as BIOS bootloader, so the **installer** image is UEFI-only regardless. That single file `agentos-installer.img` (~2 GB) is written to USB (`dd`, Etcher, Rufus DD mode) and boots UEFI.
 
 The **installed system and the VM images** stay hybrid UEFI + BIOS (they carry no El Torito catalog), so BIOS-only clouds and hypervisors still work. `ponytail:` BIOS-only bare metal can't run the installer; `dd` `agentos.raw` to its disk instead. Add a post-build `xorriso` + isolinux step if that's ever needed.
+
+**Known limitation (pending a decision):** `ElTorito=yes` builds fine (and was the original plan, to also support virtual CD / IPMI virtual media), but the resulting CD boot path drops to a GRUB rescue prompt — GRUB's embedded prefix does a GPT/PARTUUID search that can't resolve when the image is presented as CD-ROM media instead of a GPT disk, so it never finds `/grub/grub.cfg`. `ElTorito` is therefore disabled (`ElTorito=no`) and the installer is **USB-only** for now; CI's boot test runs with `SKIP_CD=1`. Revisit if virtual-CD/IPMI-media installs are needed.
 
 ### Interactive flow
 
@@ -201,19 +201,19 @@ The **installed system and the VM images** stay hybrid UEFI + BIOS (they carry n
 6. API keys (skippable).
 7. Local console mode — `headless` (default) or `terminal` (see "Local console" below).
 8. Summary → install:
-   - `systemd-repart --empty=force` lays out ESP + BIOS boot + root, copying root from `agentos.raw`; root grows to fill the disk.
-   - Write `agentos.env`, hostname, network config, credentials into the new root.
-   - `grub-install` for UEFI (removable/fallback path `\EFI\BOOT\BOOTX64.EFI`, no NVRAM entry needed) and BIOS.
+   - Verify the embedded image (`sha256sum -c`), wipe the disk, write the tested `agentos.raw` verbatim (`zstd -dc | dd`), move the backup GPT to the disk end (`sgdisk -e`). The result is byte-identical to the VM images: ESP + BIOS boot + root, UEFI and BIOS bootable, Secure Boot via the signed shim; the root partition and filesystem grow at first boot (systemd-repart + x-systemd.growfs).
+   - Mount the new root and apply settings with the target's own `agentos-config` (chroot); write the SSH key(s), password hash, optional static networkd file, and `/etc/cloud/cloud-init.disabled`.
    - Reboot.
 
 Offline, ~2–3 minutes, byte-identical OS to the VM images.
 
 ### Unattended mode
 
-If an `agentos.env` containing `AGENTOS_INSTALL_DISK=/dev/...` is found (on the installer image's FAT `AGENTOS` data partition, or fetched from the `agentos.autoinstall=<url>` kernel argument), the installer asks nothing and installs with those values. Used by CI and for multi-machine installs. Remote config must be `https://` and may be pinned with `agentos.autoinstall_sha256=<hash>`; plain http is refused, since the file carries SSH keys and secrets.
+If an `agentos.env` containing `AGENTOS_INSTALL_DISK=/dev/...` is found (on the installer image's FAT `AGENTOS` data partition, or fetched from the `agentos.autoinstall=<url>` kernel argument), the installer asks nothing and installs with those values. The data partition ships an `agentos.env.example` template; copy it to `agentos.env` on that partition to use it. Used by CI and for multi-machine installs. Remote config must be `https://` and may be pinned with `agentos.autoinstall_sha256=<hash>`; plain http is refused, since the file carries SSH keys and secrets. `AGENTOS_INSTALL_POWEROFF=1` powers the machine off instead of rebooting when the install finishes (useful for unattended/CI runs).
 
 ### Error handling
 
+- The embedded image is checksum-verified (`sha256sum -c`) before anything is written.
 - Any failure before the partition step: nothing touched, return to menu.
 - Failure after partitioning: show the error and log path (`/tmp/agentos-install.log`), offer retry; the disk is considered wiped.
 - Disk smaller than 32 GB: refuse.

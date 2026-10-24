@@ -16,7 +16,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 240
     outputs:
       version: ${{ steps.ver.outputs.v }}
     steps:
@@ -30,7 +30,7 @@ jobs:
       - name: Host setup
         run: |
           sudo apt-get update
-          sudo apt-get install -y qemu-system-x86 qemu-utils ovmf cloud-image-utils pipx shellcheck zstd
+          sudo apt-get install -y qemu-system-x86 qemu-utils ovmf cloud-image-utils mtools pipx shellcheck zstd
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           sudo chmod 666 /dev/kvm
           pipx install "git+https://github.com/systemd/mkosi@v27"
@@ -40,8 +40,11 @@ jobs:
         run: |
           shellcheck -S warning test/smoke.sh test/checks/*.sh test/env_test.sh tools/*.sh mkosi.prepare.chroot mkosi.finalize.chroot \
             mkosi.extra/usr/local/bin/* mkosi.extra/usr/local/sbin/* mkosi.extra/usr/local/lib/agentos/*.sh \
-            mkosi.extra/etc/profile.d/agentos.sh
+            mkosi.extra/etc/profile.d/agentos.sh \
+            tools/build-installer.sh test/installer-boot-test.sh test/install-test.sh installer/mkosi.extra/usr/local/sbin/* \
+            installer/mkosi.extra/usr/lib/agentos-installer/lib.sh
           test/env_test.sh
+          test/installer_test.sh
           python3 test/computer_test.py
 
       - name: Build image
@@ -52,6 +55,15 @@ jobs:
           TMPDIR: ${{ runner.temp }}
         run: test/smoke.sh mkosi.output/agentos.raw uefi bios uefi-noseed
 
+      - name: Build installer
+        run: tools/build-installer.sh
+
+      - name: Installer boot test (USB; El Torito CD boot is disabled, see installer/mkosi.conf)
+        run: SKIP_CD=1 test/installer-boot-test.sh mkosi.output/agentos-installer.raw
+
+      - name: Installer end-to-end test
+        run: TMPDIR=${{ runner.temp }} test/install-test.sh mkosi.output/agentos-installer.raw
+
       - name: Version
         id: ver
         run: |
@@ -60,7 +72,7 @@ jobs:
 
       - name: Convert
         if: github.event_name != 'pull_request'
-        run: tools/convert.sh mkosi.output/agentos.raw "${{ steps.ver.outputs.v }}" release
+        run: tools/convert.sh mkosi.output/agentos.raw "${{ steps.ver.outputs.v }}" release mkosi.output/agentos-installer.raw
 
       - name: Hand release files to the release job
         if: github.event_name != 'pull_request'

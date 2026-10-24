@@ -3,7 +3,8 @@
 # GitHub rejects release assets over 2 GiB, so anything bigger gets split
 # into <1900 MiB parts before SHA256SUMS is written.
 set -euo pipefail
-RAW=${1:?usage: convert.sh <agentos.raw> <version> <outdir>}; VER=${2:?}; OUT=${3:?}
+RAW=${1:?usage: convert.sh <agentos.raw> <version> <outdir> [installer.raw]}; VER=${2:?}; OUT=${3:?}
+INSTALLER=${4:-}
 mkdir -p "$OUT"
 base="$OUT/agentos-$VER"
 
@@ -21,6 +22,9 @@ qemu-img convert -O vhdx -o subformat=dynamic "$RAW" "$base.vhdx"
 qemu-img convert -O vmdk -o subformat=streamOptimized "$RAW" "$base.vmdk"
 zstd -q -T0 -10 --rm "$base.vhdx" "$base.vmdk"
 zstd -q -T0 -10 -o "$base.raw.zst" "$RAW"
+if [ -n "$INSTALLER" ]; then
+  zstd -q -T0 -10 -o "$OUT/agentos-installer-$VER.img.zst" "$INSTALLER"
+fi
 
 # Manifest from the image's root partition
 loop=$(sudo losetup --find --show --partscan "$RAW")
@@ -53,6 +57,11 @@ done
 {
   echo "AgentOS release download notes"
   echo
+  if [ -n "$INSTALLER" ]; then
+    echo "agentos-installer-$VER.img.zst: decompress (zstd -d), then write the .img to a USB stick"
+    echo "(dd, Etcher or Rufus DD mode) or attach it as a virtual CD (UEFI)."
+    echo
+  fi
   if (( ${#split_files[@]} > 0 )); then
     echo "These files were split into <1900 MiB parts for GitHub's 2 GiB release-asset limit:"
     for sf in "${split_files[@]}"; do
