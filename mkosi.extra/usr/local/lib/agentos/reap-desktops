@@ -1,0 +1,31 @@
+#!/bin/bash
+# Stop AgentOS desktops nobody is using. Runs every 5 min as root (agentos-reap-desktops.timer).
+# A desktop is reaped when its .last mtime is older than IDLE_MINUTES AND no VNC viewer is
+# attached. IDLE_MINUTES=0 disables the reaper. Only desktops with a .last file younger than
+# boot are ever considered (see tmpfiles: /run/agentos/desktops is tmpfs, so a stale .last from
+# before this boot, or none at all, means "don't know / don't touch").
+set -euo pipefail
+
+DESKTOPS_DIR=/run/agentos/desktops
+CONF=/etc/agentos/desktop.conf
+
+idle=$(sed -n 's/^IDLE_MINUTES=//p' "$CONF" 2>/dev/null | tail -n1)
+[[ $idle =~ ^[0-9]+$ ]] || idle=120
+[ "$idle" -eq 0 ] && exit 0
+
+now=$(date +%s)
+boot_ts=$(( now - $(cut -d. -f1 /proc/uptime) ))
+cutoff=$(( now - idle * 60 ))
+
+shopt -s nullglob
+for f in "$DESKTOPS_DIR"/*.last; do
+  n=$(basename "$f" .last)
+  [[ $n =~ ^([1-9]|1[0-6])$ ]] || continue
+  mtime=$(stat -c %Y "$f")
+  (( mtime < boot_ts )) && continue   # stale from before this boot: never touch
+  (( mtime <= cutoff )) || continue   # still within the idle window
+  systemctl is-active --quiet "agentos-desktop@$n.service" || continue
+  port=$((5900 + n))
+  ss -tn state established "( sport = :$port )" | grep -q . && continue   # a viewer is attached
+  systemctl stop "agentos-desktop@$n.service"
+done
