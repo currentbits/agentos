@@ -1,4 +1,6 @@
 # shellcheck shell=bash
+# shellcheck disable=SC2016 # vm/vml bodies are single-quoted on purpose: $vars expand on the
+# remote guest, not here.
 check_agent_manages_desktop_without_sudo() {
   vm 'systemctl --no-ask-password start agentos-desktop@5.service &&
       systemctl is-active agentos-desktop@5.service &&
@@ -52,6 +54,7 @@ check_novnc_unit_hardened() {
 }
 check_desktop_conf_published() {
   vm 'grep -qx "MAX_DESKTOPS=8" /etc/agentos/desktop.conf && grep -qx "SCREENSHOT_WIDTH=1366" /etc/agentos/desktop.conf &&
+      grep -qx "IDLE_MINUTES=120" /etc/agentos/desktop.conf &&
       test "$(stat -c %a /etc/agentos/desktop.conf)" = 644'
 }
 check_desktop_conf_follows_config() {
@@ -60,4 +63,32 @@ check_desktop_conf_follows_config() {
       grep -qx SCREENSHOT_WIDTH=1366 /etc/agentos/desktop.conf;
       rc=$?; sudo agentos-config set AGENTOS_MAX_DESKTOPS 8; sudo agentos-config set AGENTOS_SCREENSHOT_WIDTH 1366;
       sudo agentos-config apply; exit $rc'
+}
+
+# Idle desktop reaper (reap-desktops, driven by agentos-reap-desktops.timer every 5 min). These
+# drive the reaper directly rather than waiting 5 real minutes; desktop 4 is unused by any other
+# check in this suite.
+check_idle_desktop_reaped() {
+  vm 'sudo agentos-config set AGENTOS_DESKTOP_IDLE_MINUTES 1 && sudo agentos-config apply &&
+      systemctl --no-ask-password start agentos-desktop@4.service' && wait_x 4 &&
+  vm 'test -f /run/agentos/desktops/4.last &&
+      sudo touch -d "@$(( $(date +%s) - 120 ))" /run/agentos/desktops/4.last &&
+      sudo /usr/local/lib/agentos/reap-desktops &&
+      ! systemctl is-active --quiet agentos-desktop@4.service' &&
+  vm 'sudo agentos-config set AGENTOS_DESKTOP_IDLE_MINUTES 120 && sudo agentos-config apply'
+}
+check_fresh_desktop_survives_reap() {
+  vm 'sudo agentos-config set AGENTOS_DESKTOP_IDLE_MINUTES 1 && sudo agentos-config apply &&
+      systemctl --no-ask-password start agentos-desktop@4.service' && wait_x 4 &&
+  vm 'sudo /usr/local/lib/agentos/reap-desktops && systemctl is-active --quiet agentos-desktop@4.service' &&
+  vm 'systemctl --no-ask-password stop agentos-desktop@4.service &&
+      sudo agentos-config set AGENTOS_DESKTOP_IDLE_MINUTES 120 && sudo agentos-config apply'
+}
+check_idle_minutes_zero_disables_reap() {
+  vm 'sudo agentos-config set AGENTOS_DESKTOP_IDLE_MINUTES 0 && sudo agentos-config apply &&
+      systemctl --no-ask-password start agentos-desktop@4.service' && wait_x 4 &&
+  vm 'sudo touch -d "@$(( $(date +%s) - 36000 ))" /run/agentos/desktops/4.last &&
+      sudo /usr/local/lib/agentos/reap-desktops && systemctl is-active --quiet agentos-desktop@4.service' &&
+  vm 'systemctl --no-ask-password stop agentos-desktop@4.service &&
+      sudo agentos-config set AGENTOS_DESKTOP_IDLE_MINUTES 120 && sudo agentos-config apply'
 }

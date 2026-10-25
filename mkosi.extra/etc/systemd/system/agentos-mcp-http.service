@@ -13,7 +13,7 @@ RestartSec=5
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/tmp
+ReadWritePaths=/tmp /run/agentos/desktops
 
 [Install]
 WantedBy=multi-user.target

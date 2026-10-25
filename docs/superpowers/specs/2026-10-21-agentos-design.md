@@ -122,7 +122,7 @@ Headless Playwright/Chromium needs no desktop; agents should prefer it for web-o
 ### Known risks (spike first)
 
 1. Multiple `startxfce4` sessions under one user may conflict (xfconfd, panel). Fallback: one Unix user per desktop (`agent-dN`).
-2. Desktops leaked by crashed agents. `ponytail:` no idle reaper; add one if leaks occur in practice.
+2. Desktops leaked by crashed agents. Mitigated: `agentos-reap-desktops.timer` runs every 5 minutes and stops a desktop once it has had no MCP tool call and no VNC viewer attached for `AGENTOS_DESKTOP_IDLE_MINUTES` (default 120, 0 = never), configurable via `agentos-config`.
 3. One desktop per agent: two agents on the same desktop collide; nothing prevents it.
 
 ## 3. Configuration, secrets, network
@@ -136,6 +136,7 @@ AGENTOS_HOSTNAME=agentos-01
 TS_AUTHKEY=tskey-auth-...
 AGENTOS_MAX_DESKTOPS=8
 AGENTOS_SCREENSHOT_WIDTH=1366
+AGENTOS_DESKTOP_IDLE_MINUTES=120
 AGENTOS_LAN_SSH=0
 AGENTOS_CONSOLE=headless
 ANTHROPIC_API_KEY=...
@@ -155,7 +156,7 @@ Oneshot, before desktop/MCP units, re-runs on each boot until it succeeds:
 
 ### `agentos-config`
 
-Whiptail TUI, runnable any time (`sudo agentos-config`). Sets: password for `agent`, SSH authorized keys (paste or GitHub username lookup), Tailscale auth key, API keys / OAuth token, LAN SSH toggle, console mode, max desktops, screenshot width. Writes `agentos.env` and re-runs firstboot.
+Whiptail TUI, runnable any time (`sudo agentos-config`). Sets: password for `agent`, SSH authorized keys (paste or GitHub username lookup), Tailscale auth key, API keys / OAuth token, LAN SSH toggle, console mode, max desktops, screenshot width, idle desktop reaper minutes. Writes `agentos.env` and re-runs firstboot.
 
 ### Local console
 

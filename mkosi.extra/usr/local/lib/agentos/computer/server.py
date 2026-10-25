@@ -22,6 +22,7 @@ from PIL import Image as PILImage  # noqa: E402
 CONF = "/etc/agentos/desktop.conf"
 TOKENS = "/run/agentos/vnc"
 LOCK = "/tmp/agentos-desktop.lock"
+LAST_DIR = "/run/agentos/desktops"
 
 mcp = FastMCP("agentos-computer", host="0.0.0.0", log_level="WARNING", stateless_http=True)
 
@@ -64,9 +65,17 @@ def active():
                                     "--plain", "--no-legend"))
 
 
+def touch_last(n):
+    """Mark desktop n as just used, for the idle reaper (reap-desktops)."""
+    path = f"{LAST_DIR}/{n}.last"
+    open(path, "a").close()
+    os.utime(path, None)
+
+
 def need(desktop):
     if desktop not in active():
         raise ValueError(f"desktop {desktop} is not running; call create_desktop first")
+    touch_last(desktop)
 
 
 _host_cache = {"host": None, "ts": 0.0}
@@ -107,7 +116,8 @@ def _button(name):  # underscore: click() has a parameter called `button`
 
 @mcp.tool()
 def create_desktop() -> dict:
-    """Start a new 1920x1080 XFCE desktop. Returns its id and a live view URL for humans."""
+    """Start a new 1920x1080 XFCE desktop. Returns its id and a live view URL for humans.
+    Each agent should create its own desktop; desktops are not shared."""
     max_n, _ = conf()
     with open(LOCK, "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)  # ponytail: one host-wide lock; two agents can't grab the same N
@@ -123,12 +133,14 @@ def create_desktop() -> dict:
             time.sleep(0.2)
     else:
         raise RuntimeError(f"desktop {n} did not come up")
+    touch_last(n)
     return info(n)
 
 
 @mcp.tool()
 def list_desktops() -> list[dict]:
-    """List running desktops with their live view URLs."""
+    """List running desktops with their live view URLs. For visibility only: each agent should
+    create its own desktop via create_desktop, not attach to one already in use by another agent."""
     return [info(n) for n in active()]
 
 

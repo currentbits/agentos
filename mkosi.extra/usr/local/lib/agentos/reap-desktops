@@ -26,6 +26,6 @@ for f in "$DESKTOPS_DIR"/*.last; do
   (( mtime <= cutoff )) || continue   # still within the idle window
   systemctl is-active --quiet "agentos-desktop@$n.service" || continue
   port=$((5900 + n))
-  ss -tn state established "( sport = :$port )" | grep -q . && continue   # a viewer is attached
+  ss -Htn state established "( sport = :$port )" | grep -q . && continue   # a viewer is attached
   systemctl stop "agentos-desktop@$n.service"
 done

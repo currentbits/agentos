@@ -8,7 +8,7 @@ disable nftables.service
 enable docker.service
 enable containerd.service
 enable tailscaled.service
-enable agentos-firewall.service
+enable agentos-reap-desktops.timer
 enable apt-daily.timer
 enable apt-daily-upgrade.timer
 enable unattended-upgrades.service

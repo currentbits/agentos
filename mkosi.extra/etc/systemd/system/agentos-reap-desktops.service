@@ -1,0 +1,6 @@
+[Unit]
+Description=Stop idle AgentOS desktops
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/agentos/reap-desktops
