@@ -28,6 +28,8 @@ with open(img, "r+b") as f:
     if hdr[:8] != b"EFI PART": die("no GPT")
     hsize = struct.unpack_from("<I", hdr, 12)[0]
     ent_lba, n_ent, ent_size = struct.unpack_from("<QII", hdr, 72)
+    # The ISO9660 area (32 KiB on) must not overlap the GPT entry array
+    if ent_lba * 512 + n_ent * ent_size > 16 * B: die("GPT entry array reaches into the ISO9660 area")
     ents = rd(ent_lba * 512, n_ent * ent_size)
 
     # A CD is read in 2048-byte blocks: pad the image to a whole block and move the backup GPT
@@ -58,8 +60,6 @@ with open(img, "r+b") as f:
         starts.append(struct.unpack_from("<Q", e, 32)[0])
         if esp_off is None and uuid.UUID(bytes_le=e[:16]) == ESP: esp_off = starts[-1] * 512
     if esp_off is None: die("no ESP partition")
-    # The ISO9660 area (32 KiB on) must not overlap the GPT entry array
-    if ent_lba * 512 + n_ent * ent_size > 16 * B: die("GPT entry array reaches into the ISO9660 area")
     bs = rd(esp_off, 512)
     serial = struct.unpack_from("<I", bs, 0x43 if bs[0x52:0x5a] == b"FAT32   " else 0x27)[0]
     fs_uuid = f"{serial >> 16:04X}-{serial & 0xffff:04X}"
