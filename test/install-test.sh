@@ -52,6 +52,7 @@ run_installer() {  # run_installer <target.qcow2> <marker> <timeout-s>: boot unt
 expect() {  # expect <label> <command...>
   if "${@:2}"; then echo "PASS [install] $1"; else echo "FAIL [install] $1"; tail -40 "$WORK/serial.log"; FAILS=$((FAILS + 1)); fi
 }
+not_in_serial() { ! grep -q "$1" "$WORK/serial.log"; }
 untouched() { [ "$(qemu-img info --output=json "$1" | python3 -c 'import json,sys; print(json.load(sys.stdin)["actual-size"])')" -lt 1048576 ]; }
 
 if [ "$MEDIA" = usb ]; then
@@ -87,10 +88,12 @@ else
   expect cd_drive_case_target_untouched untouched "$WORK/t1.qcow2"
 fi
 
-# 5. the real install
+# 5. the real install. From CD: AGENTOS_INSTALL_POWEROFF=0, so only the delete-failed path can power off
+# (-no-reboot turns a wrong reboot into a VM exit; the serial log tells the two apart).
+POWEROFF=1; [ "$MEDIA" = usb ] || POWEROFF=0
 cat > "$WORK/env" <<EOF
 AGENTOS_INSTALL_DISK=/dev/disk/by-id/virtio-agentos-target
-AGENTOS_INSTALL_POWEROFF=1
+AGENTOS_INSTALL_POWEROFF=$POWEROFF
 AGENTOS_SSH_KEY=$(cat "$WORK/key.pub")
 AGENTOS_PASSWORD_HASH=$HASH
 AGENTOS_HOSTNAME=agentos-test
@@ -112,6 +115,8 @@ if [ "$MEDIA" = usb ]; then
   expect fat_env_deleted_message grep -q "agentos.env deleted" "$WORK/serial.log"
 else  # a CD is read-only: the settings stay, so the installer powers off instead of reinstalling on reboot
   expect cd_env_kept_poweroff_message grep -q "Could not delete agentos.env .*read-only, e.g. a CD.*powering off" "$WORK/serial.log"
+  expect cd_powered_off grep -q "reboot: Power down" "$WORK/serial.log"
+  expect cd_not_rebooted not_in_serial "reboot: Restarting"
 fi
 
 if [ "$FAILS" -ne 0 ]; then echo "$FAILS FAILURE(S) before smoke"; exit 1; fi

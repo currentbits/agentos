@@ -61,6 +61,9 @@ jobs:
       - name: Installer boot test (USB and El Torito CD)
         run: test/installer-boot-test.sh mkosi.output/agentos-installer.raw
 
+      - name: Installer boot test with Secure Boot (Microsoft keys enrolled)
+        run: SECUREBOOT=1 test/installer-boot-test.sh mkosi.output/agentos-installer.raw
+
       - name: Installer end-to-end test
         run: TMPDIR=${{ runner.temp }} test/install-test.sh mkosi.output/agentos-installer.raw
 
