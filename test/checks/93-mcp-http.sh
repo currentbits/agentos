@@ -1,4 +1,6 @@
 # shellcheck shell=bash
+# shellcheck disable=SC2016 # vm/vml bodies are single-quoted on purpose: $vars expand on the
+# remote guest, not here.
 check_mcp_http_rejects_missing_or_wrong_token() {
   vm 'systemctl is-active agentos-mcp-http.service &&
       test "$(curl -s -o /dev/null -w "%{http_code}" -m 5 -X POST http://127.0.0.1:8765/mcp)" = 401 &&

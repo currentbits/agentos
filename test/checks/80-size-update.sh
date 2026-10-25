@@ -1,4 +1,6 @@
 # shellcheck shell=bash
+# shellcheck disable=SC2016 # vm/vml bodies are single-quoted on purpose: $vars expand on the
+# remote guest, not here.
 check_root_size_budget() {
   local used; used=$(vm 'df --output=used -BM / | tail -1 | tr -dc 0-9')
   echo "root used: ${used} MiB (budget 7168)"; [ "$used" -le 7168 ]

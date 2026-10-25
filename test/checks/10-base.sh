@@ -1,4 +1,6 @@
 # shellcheck shell=bash
+# shellcheck disable=SC2016 # vm/vml bodies are single-quoted on purpose: $vars expand on the
+# remote guest, not here.
 check_boot_mode_matches() {
   if [ "$MODE" = uefi ]; then vm 'test -d /sys/firmware/efi'; else vm 'test ! -d /sys/firmware/efi'; fi
 }

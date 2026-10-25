@@ -1,4 +1,6 @@
 # shellcheck shell=bash
+# shellcheck disable=SC2016 # vm/vml bodies are single-quoted on purpose: $vars expand on the
+# remote guest, not here.
 check_node_24()     { vml 'node --version | grep -q "^v24\."'; }
 check_python()      { vml 'python3 --version && python3 -m venv --help >/dev/null && pipx --version'; }
 check_go()          { vml 'go version'; }

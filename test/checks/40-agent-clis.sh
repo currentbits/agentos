@@ -1,4 +1,6 @@
 # shellcheck shell=bash
+# shellcheck disable=SC2016 # vm/vml bodies are single-quoted on purpose: $vars expand on the
+# remote guest, not here.
 check_claude()   { vml 'claude --version'; }
 check_codex()    { vml 'codex --version'; }
 check_opencode() { vml 'opencode --version'; }

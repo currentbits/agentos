@@ -13,10 +13,11 @@ OVMF_VARS=${OVMF_VARS:-/usr/share/OVMF/OVMF_VARS_4M.fd}
 WORK=$(mktemp -d)
 export WORK
 FAILS=0
+SKIPS=0
 
 cleanup() {
-  for p in "$WORK"/*.pid; do [ -e "$p" ] && kill "$(cat "$p")" 2>/dev/null || true; done
-  [ "${KEEP_WORK:-0}" = 1 ] && echo "work dir kept: $WORK" || rm -rf "$WORK"
+  for p in "$WORK"/*.pid; do if [ -e "$p" ]; then kill "$(cat "$p")" 2>/dev/null || true; fi; done
+  if [ "${KEEP_WORK:-0}" = 1 ]; then echo "work dir kept: $WORK"; else rm -rf "$WORK"; fi
 }
 trap cleanup EXIT
 
@@ -121,8 +122,10 @@ run_checks() {
   local pattern="^$prefix"
   [[ -n ${SMOKE_DISK:-} && $prefix == check_ ]] && pattern="^(check_|installed_)"
   for fn in $(declare -F | awk '{print $3}' | grep -E "$pattern" | sort); do
-    if out=$("$fn" 2>&1); then echo "PASS [$MODE] $fn"
-    else echo "FAIL [$MODE] $fn"; echo "$out" | sed 's/^/    /'; FAILS=$((FAILS + 1)); fi
+    if out=$("$fn" 2>&1); then
+      if [[ $out == SKIP:* ]]; then echo "SKIP [$MODE] $fn: ${out#SKIP: }"; SKIPS=$((SKIPS + 1))
+      else echo "PASS [$MODE] $fn"; fi
+    else echo "FAIL [$MODE] $fn"; printf '    %s\n' "${out//$'\n'/$'\n'    }"; FAILS=$((FAILS + 1)); fi
   done
 }
 
@@ -133,4 +136,5 @@ for mode in "${MODES[@]}"; do
   port=$((port + 10))
 done
 
-[ "$FAILS" -eq 0 ] && echo "ALL CHECKS PASSED" || { echo "$FAILS FAILURE(S)"; exit 1; }
+if [ "$FAILS" -eq 0 ]; then echo "ALL CHECKS PASSED ($SKIPS skipped)"
+else echo "$FAILS FAILURE(S), $SKIPS skipped"; exit 1; fi

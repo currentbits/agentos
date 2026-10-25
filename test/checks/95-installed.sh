@@ -1,4 +1,6 @@
 # shellcheck shell=bash
+# shellcheck disable=SC2016 # vm/vml bodies are single-quoted on purpose: $vars expand on the
+# remote guest, not here.
 # Only run against disks written by the installer (smoke.sh with SMOKE_DISK set).
 installed_cloud_init_disabled()   { vm 'test -f /etc/cloud/cloud-init.disabled'; }
 installed_no_installer_keys()     { vm '! sudo grep -qE "^(AGENTOS_INSTALL_|AGENTOS_SSH_KEY|AGENTOS_PASSWORD_HASH|AGENTOS_NET_|AGENTOS_GITHUB_USER)" /etc/agentos/agentos.env'; }

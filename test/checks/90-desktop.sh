@@ -1,4 +1,6 @@
 # shellcheck shell=bash
+# shellcheck disable=SC2016 # vm/vml bodies are single-quoted on purpose: $vars expand on the
+# remote guest, not here.
 # Desktops are started with sudo here; Task 2 adds the polkit rule that lets agent do it directly.
 wait_x() {  # wait_x <N>: wait up to 60 s for display :N to answer
   vm "for i in \$(seq 1 60); do DISPLAY=:$1 xdotool getdisplaygeometry 2>/dev/null | grep -qx '1920 1080' && exit 0; sleep 1; done; exit 1"

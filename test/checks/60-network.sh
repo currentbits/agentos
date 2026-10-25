@@ -1,4 +1,6 @@
 # shellcheck shell=bash
+# shellcheck disable=SC2016 # vm/vml bodies are single-quoted on purpose: $vars expand on the
+# remote guest, not here.
 check_nft_table()       { vm 'sudo nft list table inet agentos | grep -q "policy drop"'; }
 check_lan_ssh_open()    { vm 'sudo nft list set inet agentos public_tcp | grep -qw 22'; }
 check_no_flush_ruleset(){ vm 'sudo nft list tables | grep -q "ip filter\|ip nat"'; }  # docker's tables survived
