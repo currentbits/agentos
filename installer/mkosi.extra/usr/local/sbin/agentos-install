@@ -16,7 +16,28 @@ LOG=/tmp/agentos-install.log
 # ERASED is set once writing starts, so every later failure says the disk was erased.
 die() { echo "INSTALL FAILED: $*${ERASED:+ ($ERASED was erased; fix the problem and run the installer again)}" >&2; exit 1; }
 
-boot_disk() { lsblk -no PKNAME "$(findmnt -no SOURCE /)" | head -1; }
+# disk_of <partition>: the whole disk holding it. On a CD boot the installer's partitions sit on a loop device
+# over the optical drive (sr*, see installer/mkosi.initrd.conf): report that drive. Fails closed (empty, rc 1).
+disk_of() {
+  local d f
+  d=$(lsblk -no PKNAME "$1" | head -1) || return 1
+  [ -n "$d" ] || return 1
+  if [[ $d == loop* ]]; then
+    # Attached in the initrd, so the path is relative to the old /dev mount: "/sr0", not "/dev/sr0".
+    f=$(cat "/sys/block/$d/loop/backing_file") || return 1
+    d=${f##*/}
+    [ -n "$d" ] && [ -e "/sys/block/$d" ] || return 1
+  fi
+  printf '%s\n' "$d"
+}
+# On a CD boot / is an overlay (systemd.volatile=overlay); systemd-volatile-root links the medium's
+# root device (detached from the mount table by switch-root) at /run/systemd/volatile-root.
+boot_disk() {
+  local src
+  src=$(findmnt -no SOURCE /) || return 1
+  [ "$src" != overlay ] || src=$(readlink -e /run/systemd/volatile-root) || return 1
+  disk_of "$src"
+}
 
 check_disk() {
   local d=$1 real b
@@ -27,7 +48,7 @@ check_disk() {
   [ -n "$b" ] || die "cannot determine the installer's own disk; refusing to continue"
   [ "$(basename "$real")" != "$b" ] || die "refusing to install onto the installer's own disk ($d)"
   if [ -e "$DATA_DEV" ]; then  # the stick holding agentos.env, even if the installer runs from elsewhere
-    b=$(lsblk -no PKNAME "$(readlink -f "$DATA_DEV")" | head -1) || b=""
+    b=$(disk_of "$(readlink -f "$DATA_DEV")") || b=""
     [ -n "$b" ] || die "cannot determine the disk of the AGENTOS partition; refusing to continue"
     [ "$(basename "$real")" != "$b" ] || die "refusing to install onto the installer's own disk ($d holds the AGENTOS partition)"
   fi
@@ -140,7 +161,7 @@ auto() {
   mkdir -p /run/agentos-data
   # Only the AGENTOS partition of the stick we booted from: another stick's agentos.env must not trigger an erase.
   b=$(boot_disk 2>/dev/null) || b=""
-  if [ -n "$b" ] && [ -e "$DATA_DEV" ] && [ "$(lsblk -no PKNAME "$(readlink -f "$DATA_DEV")" | head -1)" = "$b" ] &&
+  if [ -n "$b" ] && [ -e "$DATA_DEV" ] && [ "$(disk_of "$(readlink -f "$DATA_DEV")")" = "$b" ] &&
      mount -o ro "$DATA_DEV" /run/agentos-data 2>/dev/null; then
     fat=/run/agentos-data/agentos.env
   fi
@@ -167,8 +188,9 @@ auto() {
     if mount -o remount,rw /run/agentos-data && shred -u "$fat" && sync -f /run/agentos-data; then
       echo "agentos.env deleted from the stick's AGENTOS partition."
     else
-      echo "Could not delete agentos.env from the stick's AGENTOS partition: powering off instead of rebooting," \
-           "so it does not install again. Remove the stick and delete agentos.env by hand (it may contain secrets)."
+      echo "Could not delete agentos.env from the installer's AGENTOS partition (read-only, e.g. a CD):" \
+           "powering off instead of rebooting, so it does not install again. Remove the stick or CD before" \
+           "powering on, and delete agentos.env from it (or from the image file) by hand: it may contain secrets."
       off=1
     fi
   else
@@ -253,7 +275,7 @@ tui() {
   # ERR trap, also in subshells, so unchecked failures in the engine would be ignored. A fresh process restores both.
   if AGENTOS_DD_STATUS=progress "$0" --env "$env" 2>&1 | tee -a "$LOG"; then
     rm -f "$env"
-    W --msgbox "AgentOS is installed.\n\nRemove the USB stick, then press Enter to reboot." 10 60
+    W --msgbox "AgentOS is installed.\n\nRemove the USB stick or CD, then press Enter to reboot." 10 60
     systemctl reboot
   else
     rm -f "$env"
