@@ -72,6 +72,9 @@ network_file() {
 # url_host <url>: host[:port] only; the path/query of an autoinstall URL may carry a secret.
 url_host() { local h=${1#*://}; printf '%s' "${h%%[/?#]*}"; }
 
+# loop_backing_drive <backing_file>: the optical drive (sr*) behind a loop device, else fail (closed).
+loop_backing_drive() { local d=${1##*/}; [[ $d =~ ^sr[0-9]+$ ]] && printf '%s\n' "$d"; }
+
 valid_uuid() { [[ $1 =~ ^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$ ]]; }
 
 # rewrite_root_partuuid <esp-dir> <old> <new>: point root=PARTUUID in every text config on the ESP

@@ -17,7 +17,8 @@ LOG=/tmp/agentos-install.log
 die() { echo "INSTALL FAILED: $*${ERASED:+ ($ERASED was erased; fix the problem and run the installer again)}" >&2; exit 1; }
 
 # disk_of <partition>: the whole disk holding it. On a CD boot the installer's partitions sit on a loop device
-# over the optical drive (sr*, see installer/mkosi.initrd.conf): report that drive. Fails closed (empty, rc 1).
+# over the optical drive (sr*, see installer/mkosi.initrd.conf): report that drive; a loop over anything
+# else fails. Fails closed (empty, rc 1).
 disk_of() {
   local d f
   d=$(lsblk -no PKNAME "$1" | head -1) || return 1
@@ -25,8 +26,7 @@ disk_of() {
   if [[ $d == loop* ]]; then
     # Attached in the initrd, so the path is relative to the old /dev mount: "/sr0", not "/dev/sr0".
     f=$(cat "/sys/block/$d/loop/backing_file") || return 1
-    d=${f##*/}
-    [ -n "$d" ] && [ -e "/sys/block/$d" ] || return 1
+    d=$(loop_backing_drive "$f") && [ -e "/sys/block/$d" ] || return 1
   fi
   printf '%s\n' "$d"
 }

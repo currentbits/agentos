@@ -129,4 +129,11 @@ fstab_root_partuuid "$t/fstab" "$new" || fail fstab_root_partuuid
 grep -qx "PARTUUID=$new  /  ext4  defaults,x-systemd.growfs  0  0" "$t/fstab" || fail "fstab_root_partuuid line"
 if fstab_root_partuuid "$t/fstab" "$new" 2>/dev/null; then fail "fstab_root_partuuid accepted fstab without the PARTLABEL line"; fi
 
+# loop_backing_drive: a loop device's backing file may only be an optical drive (sr*)
+[ "$(loop_backing_drive /sr0)" = sr0 ] || fail "loop_backing_drive /sr0"
+[ "$(loop_backing_drive /dev/sr12)" = sr12 ] || fail "loop_backing_drive /dev/sr12"
+for b in /sda /dev/nvme0n1 /var/tmp/x.img /sr /srx "" /; do
+  if loop_backing_drive "$b" >/dev/null; then fail "loop_backing_drive accepted '$b'"; fi
+done
+
 echo "installer lib OK"
