@@ -7,6 +7,24 @@ NAME=agentos-computer
 CMD=/usr/local/bin/agentos-computer
 rc=0
 
+# Hold one lock for the whole run: a concurrent run (e.g. two boots racing, or a manual re-apply)
+# must not interleave writes to the same config files.
+LOCKDIR=$HOME/.config/agentos
+mkdir -p "$LOCKDIR"
+exec 9>"$LOCKDIR/register-mcp.lock"
+flock 9
+
+# append_atomically <file> <printf-fmt> [args...]: copy, append to the copy, then mv over the
+# original (keeping its mode), so a reader never sees a half-written file.
+append_atomically() {
+  local f=$1; shift
+  local tmp; tmp=$(mktemp "$f.XXXXXX")
+  cp -p "$f" "$tmp"
+  # shellcheck disable=SC2059 # the format string is a fixed caller-supplied literal, not data
+  printf "$@" >> "$tmp"
+  mv "$tmp" "$f"
+}
+
 # Claude Code (user scope, ~/.claude.json)
 if ! claude mcp get "$NAME" >/dev/null 2>&1; then
   claude mcp add --scope user "$NAME" -- "$CMD" >/dev/null || { echo "claude: registration failed" >&2; rc=1; }
@@ -15,9 +33,9 @@ fi
 # Codex and Grok share the TOML shape
 for f in "$HOME/.codex/config.toml" "$HOME/.grok/config.toml"; do
   mkdir -p "$(dirname "$f")"; touch "$f"
-  grep -q "^\[mcp_servers\.$NAME\]" "$f" || printf '\n[mcp_servers.%s]\ncommand = "%s"\n' "$NAME" "$CMD" >> "$f"
+  grep -q "^\[mcp_servers\.$NAME\]" "$f" || append_atomically "$f" '\n[mcp_servers.%s]\ncommand = "%s"\n' "$NAME" "$CMD"
 done
-grep -q '^\[mcp\]' "$HOME/.grok/config.toml" || printf '\n[mcp]\nmax_output_bytes = 4000000\n' >> "$HOME/.grok/config.toml"
+grep -q '^\[mcp\]' "$HOME/.grok/config.toml" || append_atomically "$HOME/.grok/config.toml" '\n[mcp]\nmax_output_bytes = 4000000\n'
 
 # opencode (JSON)
 f=$HOME/.config/opencode/opencode.json

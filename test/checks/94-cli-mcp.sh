@@ -1,4 +1,6 @@
 # shellcheck shell=bash
+# shellcheck disable=SC2016 # vm/vml bodies are single-quoted on purpose: $vars expand on the
+# remote guest, not here.
 check_claude_mcp_registered()   { vml 'claude mcp get agentos-computer 2>&1 | grep -q /usr/local/bin/agentos-computer'; }
 check_claude_mcp_connects()     { vml 'claude mcp list 2>&1 | grep agentos-computer | grep -qi connected'; }
 check_codex_mcp_registered()    { vml 'codex mcp list 2>&1 | grep -q agentos-computer'; }
@@ -13,6 +15,15 @@ check_register_idempotent() {
       test "$(grep -c "^\[mcp\]" ~/.grok/config.toml)" = 1'
 }
 check_register_keeps_user_config() {
+  # Strengthened so it can actually fail: apply twice (idempotency), then require the user block
+  # to appear exactly once and be byte-identical to what was written, alongside exactly one
+  # agentos-computer block.
   vm 'printf "\n[mcp_servers.mine]\ncommand = \"/bin/true\"\n" >> ~/.codex/config.toml &&
-      sudo agentos-config apply && grep -q "^\[mcp_servers\.mine\]" ~/.codex/config.toml'
+      before=$(grep -A1 "^\[mcp_servers\.mine\]" ~/.codex/config.toml) &&
+      sudo agentos-config apply && sudo agentos-config apply &&
+      after=$(grep -A1 "^\[mcp_servers\.mine\]" ~/.codex/config.toml) &&
+      test "$before" = "$after" &&
+      test "$(grep -c "^\[mcp_servers\.mine\]" ~/.codex/config.toml)" = 1 &&
+      test "$(grep -c "^command = \"/bin/true\"" ~/.codex/config.toml)" = 1 &&
+      test "$(grep -c "^\[mcp_servers\.agentos-computer\]" ~/.codex/config.toml)" = 1'
 }
