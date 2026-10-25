@@ -1,7 +1,10 @@
 #!/bin/bash
 # End-to-end installer test: refusal cases, an unattended install onto a blank 40G disk,
 # then the full smoke suite (uefi + bios) against the installed disk.
+# INSTALL_MEDIA=cd: the installer (with agentos.env) is attached as a virtual CD instead of a USB disk.
 set -euo pipefail
+MEDIA=${INSTALL_MEDIA:-usb}
+case $MEDIA in usb|cd) ;; *) echo "INSTALL_MEDIA must be usb or cd" >&2; exit 2 ;; esac
 INST=$(realpath "${1:?usage: install-test.sh <agentos-installer.raw>}")
 HERE=$(cd "$(dirname "$0")" && pwd)
 OVMF_CODE=${OVMF_CODE:-/usr/share/OVMF/OVMF_CODE_4M.fd}
@@ -28,9 +31,11 @@ fat_env_gone() { local l; l=$(mdir -b -i "$FAT" ::) && ! grep -qix '::/agentos.e
 
 run_installer() {  # run_installer <target.qcow2> <marker> <timeout-s>: boot until marker or poweroff
   cp "$OVMF_VARS" "$WORK/vars.fd"; : > "$WORK/serial.log"
+  local media=(-drive "file=$WORK/stick.raw,format=raw,if=none,id=stick" -device "virtio-blk-pci,drive=stick,serial=agentos-stick")
+  [ "$MEDIA" = usb ] || media=(-drive "file=$WORK/stick.raw,format=raw,media=cdrom,readonly=on")
   qemu-system-x86_64 -machine q35 -enable-kvm -cpu host -m 2048 -smp 2 \
     -drive "if=pflash,format=raw,readonly=on,file=$OVMF_CODE" -drive "if=pflash,format=raw,file=$WORK/vars.fd" \
-    -drive "file=$WORK/stick.raw,format=raw,if=none,id=stick" -device virtio-blk-pci,drive=stick,serial=agentos-stick \
+    "${media[@]}" \
     -drive "file=$1,format=qcow2,if=none,id=tgt,detect-zeroes=on" -device "virtio-blk-pci,drive=tgt,serial=agentos-target${TGT_OPTS:-}" \
     -nic user,model=virtio-net-pci -display none -serial "file:$WORK/serial.log" -no-reboot \
     -daemonize -pidfile "$WORK/q.pid"
@@ -49,30 +54,38 @@ expect() {  # expect <label> <command...>
 }
 untouched() { [ "$(qemu-img info --output=json "$1" | python3 -c 'import json,sys; print(json.load(sys.stdin)["actual-size"])')" -lt 1048576 ]; }
 
-# 1. refuses the installer's own disk; target untouched
-printf 'AGENTOS_INSTALL_DISK=/dev/disk/by-id/virtio-agentos-stick\n' > "$WORK/env"; stick "$WORK/env"
-qemu-img create -q -f qcow2 "$WORK/t1.qcow2" 40G
-expect refuses_boot_disk run_installer "$WORK/t1.qcow2" "refusing to install onto the installer's own disk" 300
-expect boot_disk_case_target_untouched untouched "$WORK/t1.qcow2"
+if [ "$MEDIA" = usb ]; then
+  # 1. refuses the installer's own disk; target untouched
+  printf 'AGENTOS_INSTALL_DISK=/dev/disk/by-id/virtio-agentos-stick\n' > "$WORK/env"; stick "$WORK/env"
+  qemu-img create -q -f qcow2 "$WORK/t1.qcow2" 40G
+  expect refuses_boot_disk run_installer "$WORK/t1.qcow2" "refusing to install onto the installer's own disk" 300
+  expect boot_disk_case_target_untouched untouched "$WORK/t1.qcow2"
 
-# 2. refuses a disk smaller than 32 GiB
-printf 'AGENTOS_INSTALL_DISK=/dev/disk/by-id/virtio-agentos-target\n' > "$WORK/env"; stick "$WORK/env"
-qemu-img create -q -f qcow2 "$WORK/t2.qcow2" 20G
-expect refuses_small_disk run_installer "$WORK/t2.qcow2" "smaller than 32 GiB" 300
-expect small_disk_untouched untouched "$WORK/t2.qcow2"
+  # 2. refuses a disk smaller than 32 GiB
+  printf 'AGENTOS_INSTALL_DISK=/dev/disk/by-id/virtio-agentos-target\n' > "$WORK/env"; stick "$WORK/env"
+  qemu-img create -q -f qcow2 "$WORK/t2.qcow2" 20G
+  expect refuses_small_disk run_installer "$WORK/t2.qcow2" "smaller than 32 GiB" 300
+  expect small_disk_untouched untouched "$WORK/t2.qcow2"
 
-# 3. refuses invalid settings before writing
-printf 'AGENTOS_INSTALL_DISK=/dev/disk/by-id/virtio-agentos-target\nAGENTOS_SSH_KEY=command="x" ssh-ed25519 AAAA\n' > "$WORK/env"; stick "$WORK/env"
-qemu-img create -q -f qcow2 "$WORK/t3.qcow2" 40G
-expect refuses_bad_ssh_key run_installer "$WORK/t3.qcow2" "invalid AGENTOS_SSH_KEY" 300
-expect bad_settings_untouched untouched "$WORK/t3.qcow2"
+  # 3. refuses invalid settings before writing
+  printf 'AGENTOS_INSTALL_DISK=/dev/disk/by-id/virtio-agentos-target\nAGENTOS_SSH_KEY=command="x" ssh-ed25519 AAAA\n' > "$WORK/env"; stick "$WORK/env"
+  qemu-img create -q -f qcow2 "$WORK/t3.qcow2" 40G
+  expect refuses_bad_ssh_key run_installer "$WORK/t3.qcow2" "invalid AGENTOS_SSH_KEY" 300
+  expect bad_settings_untouched untouched "$WORK/t3.qcow2"
 
-# 4. refuses a 4K-native disk (agentos.raw is a 512-byte-sector GPT image)
-printf 'AGENTOS_INSTALL_DISK=/dev/disk/by-id/virtio-agentos-target\n' > "$WORK/env"; stick "$WORK/env"
-qemu-img create -q -f qcow2 "$WORK/t4.qcow2" 40G
-TGT_OPTS=,logical_block_size=4096,physical_block_size=4096 \
-  expect refuses_4kn_disk run_installer "$WORK/t4.qcow2" "4K-native); not supported. The disk was not touched." 300
-expect 4kn_disk_untouched untouched "$WORK/t4.qcow2"
+  # 4. refuses a 4K-native disk (agentos.raw is a 512-byte-sector GPT image)
+  printf 'AGENTOS_INSTALL_DISK=/dev/disk/by-id/virtio-agentos-target\n' > "$WORK/env"; stick "$WORK/env"
+  qemu-img create -q -f qcow2 "$WORK/t4.qcow2" 40G
+  TGT_OPTS=,logical_block_size=4096,physical_block_size=4096 \
+    expect refuses_4kn_disk run_installer "$WORK/t4.qcow2" "4K-native); not supported. The disk was not touched." 300
+  expect 4kn_disk_untouched untouched "$WORK/t4.qcow2"
+else
+  # 1. refuses the CD drive itself (and so the loop device over it): only TYPE=disk targets
+  printf 'AGENTOS_INSTALL_DISK=/dev/sr0\n' > "$WORK/env"; stick "$WORK/env"
+  qemu-img create -q -f qcow2 "$WORK/t1.qcow2" 40G
+  expect refuses_cd_drive run_installer "$WORK/t1.qcow2" "/dev/sr0 is not a whole disk" 300
+  expect cd_drive_case_target_untouched untouched "$WORK/t1.qcow2"
+fi
 
 # 5. the real install
 cat > "$WORK/env" <<EOF
@@ -94,8 +107,12 @@ EOF
 stick "$WORK/env"
 qemu-img create -q -f qcow2 "$WORK/target.qcow2" 40G
 expect unattended_install run_installer "$WORK/target.qcow2" "AGENTOS INSTALL OK" 1800
-expect fat_env_deleted fat_env_gone
-expect fat_env_deleted_message grep -q "agentos.env deleted" "$WORK/serial.log"
+if [ "$MEDIA" = usb ]; then
+  expect fat_env_deleted fat_env_gone
+  expect fat_env_deleted_message grep -q "agentos.env deleted" "$WORK/serial.log"
+else  # a CD is read-only: the settings stay, so the installer powers off instead of reinstalling on reboot
+  expect cd_env_kept_poweroff_message grep -q "Could not delete agentos.env .*read-only, e.g. a CD.*powering off" "$WORK/serial.log"
+fi
 
 if [ "$FAILS" -ne 0 ]; then echo "$FAILS FAILURE(S) before smoke"; exit 1; fi
 
