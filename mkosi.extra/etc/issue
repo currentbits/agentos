@@ -1,4 +1,4 @@
-AgentOS \n  —  \4  (tailnet: \4{tailscale0})
+AgentOS \n  —  \4  —  tailnet \4{tailscale0}
 
 Configure: sudo agentos-config    Update: agentos-update
 
