@@ -1,0 +1,4 @@
+# AgentOS installer booted as a (virtual) CD: Linux exposes no partitions on sr* and the GPT uses
+# 512-byte sectors, so root=PARTUUID= never appears. Attach the CD as a partitioned 512-byte loop
+# device. (systemd >= 261 does this itself via systemd-loop@.service; Debian 13 has 257.)
+SUBSYSTEM=="block", KERNEL=="sr[0-9]*", ACTION=="add|change", ENV{ID_CDROM_MEDIA}=="1", ENV{SYSTEMD_WANTS}+="agentos-cd-loop@%k.service"

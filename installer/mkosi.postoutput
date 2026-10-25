@@ -1,0 +1,83 @@
+#!/usr/bin/python3
+# Make the El Torito (virtual CD) boot find GRUB's config. Usage: mkosi.postoutput [image.raw]
+#
+# Booted as a CD, the Debian-signed GRUB's root/prefix is the whole CD, (cd0), so it reads
+# (cd0)/EFI/debian/grub.cfg from the ISO9660 view, which systemd-repart --el-torito writes empty
+# (repart has no option to add files). This adds that one file to the ISO9660 area below the ESP
+# (byte 32 KiB .. 1 MiB); the GPT, the partitions and the boot catalog are not moved or changed.
+# The file selects the installer's ESP by its FAT volume UUID and adds the kernel arguments a CD
+# boot needs (agentos_cdargs, used in KernelCommandLine= in mkosi.conf). grub.cfg is not covered
+# by Secure Boot (shim + GRUB verify only the binaries and the kernel), so this keeps Secure Boot.
+import os, struct, sys, uuid
+
+B = 2048
+ESP = uuid.UUID("c12a7328-f81f-11d2-ba4b-00a0c93ec93b")
+CDARGS = "ro systemd.volatile=overlay agentos.cd"  # agentos.cd: gates the initrd's loop unit
+img = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.environ["OUTPUTDIR"], "agentos-installer.raw")
+
+def die(msg): sys.exit(f"mkosi.postoutput: {img}: {msg}")
+def both16(v): return struct.pack("<H", v) + struct.pack(">H", v)
+def both32(v): return struct.pack("<I", v) + struct.pack(">I", v)
+
+with open(img, "r+b") as f:
+    def rd(off, n): f.seek(off); return f.read(n)
+
+    # ESP: first GPT partition of type ESP (512-byte LBAs), and its FAT volume serial = GRUB fs-uuid
+    hdr = rd(512, 92)
+    if hdr[:8] != b"EFI PART": die("no GPT")
+    ent_lba, n_ent, ent_size = struct.unpack_from("<QII", hdr, 72)
+    for i in range(n_ent):
+        e = rd(ent_lba * 512 + i * ent_size, ent_size)
+        if uuid.UUID(bytes_le=e[:16]) == ESP:
+            esp_off = struct.unpack_from("<Q", e, 32)[0] * 512
+            break
+    else: die("no ESP partition")
+    bs = rd(esp_off, 512)
+    serial = struct.unpack_from("<I", bs, 0x43 if bs[0x52:0x5a] == b"FAT32   " else 0x27)[0]
+    fs_uuid = f"{serial >> 16:04X}-{serial & 0xffff:04X}"
+
+    # ISO9660 as written by repart: PVD at block 16, El Torito boot record, terminator; no Joliet
+    pvd = bytearray(rd(16 * B, B))
+    if pvd[:6] != b"\x01CD001": die("no ISO9660 primary volume descriptor (ElTorito=yes?)")
+    blk = 17
+    while (t := rd(blk * B, 7))[0] != 255:
+        if t[1:6] != b"CD001" or t[0] == 2: die(f"unexpected volume descriptor type {t[0]} at block {blk}")
+        blk += 1
+    root = pvd[156:190]
+    if rd(struct.unpack_from("<I", root, 2)[0] * B, B).find(b"EFI") >= 0: die("already has /EFI")
+    date = bytes(root[18:25])
+    n = struct.unpack_from("<I", pvd, 80)[0]          # first free block: new structures go here
+    path_l, path_m, d_root, d_efi, d_deb, d_cfg = range(n, n + 6)
+    if (n + 6) * B > esp_off: die("no room below the ESP")
+    if rd(n * B, 6 * B).strip(b"\0"): die(f"blocks {n}..{n + 5} are not free")
+
+    cfg = (f"# AgentOS installer booted as a CD: root is (cd0); boot from the installer's own ESP.\n"
+           f"search --no-floppy --fs-uuid --set=root {fs_uuid}\n"
+           f'set agentos_cdargs="{CDARGS}"\nexport agentos_cdargs\n'
+           f"configfile /grub/grub.cfg\n").encode()
+
+    def rec(name, lba, size, flags):
+        r = bytes(2) + both32(lba) + both32(size) + date + bytes([flags, 0, 0]) + both16(1) + bytes([len(name)]) + name
+        r += b"\0" * (len(r) % 2)
+        return bytes([len(r)]) + r[1:]
+    def dirblk(me, parent, *entries):
+        return (rec(b"\0", me, B, 2) + rec(b"\1", parent, B, 2) + b"".join(entries)).ljust(B, b"\0")
+    def ptable(fmt):
+        t = b""
+        for name, lba, parent in ((b"\0", d_root, 1), (b"EFI", d_efi, 1), (b"DEBIAN", d_deb, 2)):
+            t += struct.pack(fmt, len(name), 0, lba, parent) + name + b"\0" * (len(name) % 2)
+        return t
+    pl, pm = ptable("<BBIH"), ptable(">BBIH")
+    f.seek(n * B)
+    f.write(pl.ljust(B, b"\0") + pm.ljust(B, b"\0")
+            + dirblk(d_root, d_root, rec(b"EFI", d_efi, B, 2))
+            + dirblk(d_efi, d_root, rec(b"DEBIAN", d_deb, B, 2))
+            + dirblk(d_deb, d_efi, rec(b"GRUB.CFG;1", d_cfg, len(cfg), 0))
+            + cfg.ljust(B, b"\0"))
+    pvd[80:88] = both32(n + 6)
+    pvd[132:140] = both32(len(pl))
+    pvd[140:148] = struct.pack("<II", path_l, 0)
+    pvd[148:156] = struct.pack(">II", path_m, 0)
+    pvd[156:190] = rec(b"\0", d_root, B, 2)
+    f.seek(16 * B); f.write(pvd)
+print(f"mkosi.postoutput: added /EFI/debian/grub.cfg (ESP fs-uuid {fs_uuid}) to the ISO9660 view of {img}")
