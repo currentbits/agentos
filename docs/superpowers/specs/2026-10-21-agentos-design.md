@@ -15,7 +15,7 @@ A minimal, headless Linux OS whose only job is to run AI coding agents (Claude C
 |---|---|
 | Base | Debian 13 (trixie), amd64 |
 | Build tool | mkosi (declarative, builds without booting a VM; must run on Linux — CI or a Linux VM) |
-| Outputs | `agentos.raw`, `.qcow2` (Proxmox/Unraid/KVM/OpenStack), `.vhdx` (Hyper-V), `.vmdk` (VMware), `agentos-installer.img` (bare metal, USB only — see "Live environment" for the virtual-CD limitation) |
+| Outputs | `agentos.raw`, `.qcow2` (Proxmox/Unraid/KVM/OpenStack), `.vhdx` (Hyper-V), `.vmdk` (VMware), `agentos-installer.img` (bare metal: USB stick or (virtual) CD, UEFI — see "Live environment") |
 | Kernel | Generic `linux-image-amd64` + microcode + NIC firmware only (real hardware + all hypervisors) |
 | Boot | GRUB hybrid UEFI + BIOS, Debian signed shim (Secure Boot works) |
 | Agent CLIs | Baked in at build, installed per-user so their own updaters work |
@@ -185,11 +185,14 @@ If `agent` has no password, no SSH key, and Tailscale is not up, tty1 autologins
 
 `installer/` is a separate mkosi project (built by `tools/build-installer.sh` after the main image) for a minimal live system (generic kernel, firmware, systemd, grub, whiptail) that embeds the whole `agentos.raw` (zstd-compressed, ~1.9 GB payload). Boots straight into `agentos-install` on tty1 (Alt+F2 for a shell).
 
-Packaging: mkosi has no ISO output, but `Format=disk` (+ optionally `ElTorito=yes`) produces one GPT disk image. mkosi documents El Torito as incompatible with grub as BIOS bootloader, so the **installer** image is UEFI-only regardless. That single file `agentos-installer.img` (~4 GB) is written to USB (`dd`, Etcher, Rufus DD mode) and boots UEFI.
+Packaging: mkosi has no ISO output, but `Format=disk` + `ElTorito=yes` produces one GPT disk image with an El Torito boot catalog for the ESP. mkosi documents El Torito as incompatible with grub as BIOS bootloader, so the **installer** image is UEFI-only regardless. That single file `agentos-installer.img` (~4 GB) is written to USB (`dd`, Etcher, Rufus DD mode) or attached as a (virtual) CD (IPMI/iDRAC/iLO virtual media, Hyper-V DVD) and boots UEFI, with Secure Boot (shim, Debian-signed GRUB and kernel).
 
 The **installed system and the VM images** stay hybrid UEFI + BIOS (they carry no El Torito catalog), so BIOS-only clouds and hypervisors still work. `ponytail:` BIOS-only bare metal can't run the installer; `dd` `agentos.raw` to its disk instead. Add a post-build `xorriso` + isolinux step if that's ever needed.
 
-**Known limitation (pending a decision):** `ElTorito=yes` builds fine (and was the original plan, to also support virtual CD / IPMI virtual media), but booted as a CD, GRUB does not find its config or ESP and drops to a rescue prompt (its early config is a `search --file /grub/grub.cfg`). The exact cause was not investigated. `ElTorito` is therefore disabled (`ElTorito=no`) and the installer is **USB-only** for now; CI's boot test runs with `SKIP_CD=1`. Revisit if virtual-CD/IPMI-media installs are needed.
+**Virtual CD (El Torito).** Booted as a CD, two things differ from USB, and both are fixed with CD-only pieces so the USB path is unchanged:
+- *GRUB:* the Debian-signed GRUB has no embedded search config; as a CD its root/prefix is the whole CD, `(cd0)/EFI/debian`, i.e. the ISO9660 view, which systemd-repart writes empty (it has no option to add files). `installer/mkosi.postoutput` adds one file, `/EFI/debian/grub.cfg`, to that ISO9660 view (blocks below the ESP; GPT, partitions and boot catalog untouched). It selects the installer's own ESP by FAT volume UUID (`search --fs-uuid`), sets `agentos_cdargs`, and chains to the ESP's `/grub/grub.cfg`, whose `linux` line ends in `${agentos_cdargs}` (empty on USB). grub.cfg is not covered by Secure Boot (shim and GRUB verify binaries and the kernel only), so Secure Boot keeps working; this is tested with Microsoft keys enrolled (`SECUREBOOT=1 test/installer-boot-test.sh`).
+- *initrd:* Linux exposes no partitions on `sr*`, and the GPT uses 512-byte sectors on a 2048-byte device, so `root=PARTUUID=` never appears. `installer/mkosi.initrd.conf/` adds a udev rule + unit to mkosi's default initrd that, on CD boots only (`agentos.cd` from `agentos_cdargs`), attaches the CD as a read-only, partitioned 512-byte loop device (`losetup -P -r -b 512`). The root is then read-only media, so `agentos_cdargs` also adds `ro systemd.volatile=overlay` (tmpfs overlay). systemd ≥ 261 does the loop step itself (`systemd-loop@.service`); Debian 13 has 257.
+- *Engine:* on a CD the installer's own disk is the optical drive behind that loop device; optical drives and loop devices are never targets (`TYPE=disk` only). `agentos.env` on a CD cannot be deleted, so after an unattended install from CD the installer powers off with that reason (see Unattended flow).
 
 **Boot the installed system in UEFI mode.** Under BIOS/CSM, GRUB's BIOS core image boots the first disk carrying `/grub/grub.cfg`, so another AgentOS disk or the installer stick can take over the boot. Remove the stick after installing.
 
@@ -211,7 +214,7 @@ Offline, ~2–3 minutes, byte-identical OS to the VM images.
 
 ### Unattended mode
 
-If an `agentos.env` containing `AGENTOS_INSTALL_DISK=/dev/...` is found (on the installer image's FAT `AGENTOS` data partition, or fetched from the `agentos.autoinstall=<url>` kernel argument), the installer asks nothing and installs with those values. The data partition ships an `agentos.env.example` template; copy it to `agentos.env` on that partition to use it. Used by CI and for multi-machine installs. Remote config must be `https://` and may be pinned with `agentos.autoinstall_sha256=<hash>`; plain http is refused, since the file carries SSH keys and secrets. `AGENTOS_INSTALL_POWEROFF=1` powers the machine off instead of rebooting when the install finishes (useful for unattended/CI runs).
+If an `agentos.env` containing `AGENTOS_INSTALL_DISK=/dev/...` is found (on the installer image's FAT `AGENTOS` data partition, or fetched from the `agentos.autoinstall=<url>` kernel argument), the installer asks nothing and installs with those values. The data partition ships an `agentos.env.example` template; copy it to `agentos.env` on that partition to use it. Used by CI and for multi-machine installs. Remote config must be `https://` and may be pinned with `agentos.autoinstall_sha256=<hash>`; plain http is refused, since the file carries SSH keys and secrets. `AGENTOS_INSTALL_POWEROFF=1` powers the machine off instead of rebooting when the install finishes (useful for unattended/CI runs). On a (virtual) CD, put `agentos.env` into the image file before attaching it (e.g. `mcopy` onto the `AGENTOS` partition); the CD is read-only, so the installer cannot delete it afterwards and powers off with that reason instead of rebooting.
 
 ### Error handling
 
@@ -221,7 +224,7 @@ If an `agentos.env` containing `AGENTOS_INSTALL_DISK=/dev/...` is found (on the 
 - Disk smaller than 32 GB: refuse.
 - Disk with 4096-byte logical sectors (4K-native): refuse (the image is a 512-byte-sector GPT).
 
-Not covered by automated tests (manual walkthrough or untested): the TUI → engine path (manual walkthrough only), the refusal of a disk holding the `AGENTOS` partition, the mounted-disk refusal, the GitHub SSH key fetch, URL autoinstall (`agentos.autoinstall=`), and the CD boot path (disabled).
+Not covered by automated tests (manual walkthrough or untested): the TUI → engine path (manual walkthrough only), the refusal of a disk holding the `AGENTOS` partition, the mounted-disk refusal, the GitHub SSH key fetch, and URL autoinstall (`agentos.autoinstall=`). The CD path is covered by `test/installer-boot-test.sh` (boot + TUI) and `INSTALL_MEDIA=cd test/install-test.sh` (unattended install from CD, then the smoke suite).
 
 ## 5. Build, test, update
 
@@ -332,7 +335,7 @@ LUKS with TPM2 unlock; an egress allowlist mode (agent may reach only LLM APIs, 
 
 - **Grok**: xAI's official Grok Build (`grok`, Apache-2.0, `xai-org/grok-build`), latest release via `https://x.ai/cli/install.sh`; headless auth via `GROK_CODE_XAI_API_KEY`.
 - **Image size**: targeted firmware instead of `firmware-linux`, Rust `minimal` profile, doc/locale stripping; 7 GB budget (raised from 4.5 GB after measuring).
-- **ISO**: mkosi `Format=disk`, one UEFI-only `.img` for USB (El Torito and grub-BIOS are mutually exclusive in mkosi). CD boot (`ElTorito=yes`) is currently disabled: booted as a CD, GRUB does not find its config or ESP and drops to a rescue prompt; the cause was not investigated (Section 4). Installed systems and VM images remain UEFI + BIOS. No separate ISO tooling.
+- **ISO**: mkosi `Format=disk` + `ElTorito=yes`, one UEFI-only `.img` for USB and (virtual) CD (El Torito and grub-BIOS are mutually exclusive in mkosi). CD boot needs one ISO9660 file added after the build (GRUB) and a loop-attach unit in the initrd (Section 4); both are CD-only and keep the Debian-signed Secure Boot chain. Installed systems and VM images remain UEFI + BIOS. No separate ISO tooling.
 
 ## Open items to resolve during planning
 
