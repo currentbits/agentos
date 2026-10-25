@@ -194,6 +194,8 @@ The **installed system and the VM images** stay hybrid UEFI + BIOS (they carry n
 - *initrd:* Linux exposes no partitions on `sr*`, and the GPT uses 512-byte sectors on a 2048-byte device, so `root=PARTUUID=` never appears. `installer/mkosi.initrd.conf/` adds a udev rule + unit to mkosi's default initrd that, on CD boots only (`agentos.cd` from `agentos_cdargs`), attaches the CD as a read-only, partitioned 512-byte loop device (`losetup -P -r -b 512`). The root is then read-only media, so `agentos_cdargs` also adds `ro systemd.volatile=overlay` (tmpfs overlay). systemd ≥ 261 does the loop step itself (`systemd-loop@.service`); Debian 13 has 257.
 - *Engine:* on a CD the installer's own disk is the optical drive behind that loop device; optical drives and loop devices are never targets (`TYPE=disk` only). `agentos.env` on a CD cannot be deleted, so after an unattended install from CD the installer powers off with that reason (see Unattended flow).
 
+**Detach the virtual CD after an unattended install.** BMC virtual media (iDRAC, iLO, IPMI) often stays attached across power cycles, and the CD's `agentos.env` cannot be deleted: if the CD is still attached and boots first, the next power-on erases the target disk and reinstalls. The installer powers off (never reboots) after an install from CD for exactly this reason. CD boot is verified in QEMU/OVMF (including Secure Boot with Microsoft keys), but not yet on real iDRAC or iLO hardware.
+
 **Boot the installed system in UEFI mode.** Under BIOS/CSM, GRUB's BIOS core image boots the first disk carrying `/grub/grub.cfg`, so another AgentOS disk or the installer stick can take over the boot. Remove the stick after installing.
 
 ### Interactive flow

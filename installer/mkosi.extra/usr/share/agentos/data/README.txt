@@ -15,5 +15,12 @@ unattended install, put agentos.env on this partition of the image file before
 attaching it. A CD is read-only, so the installer cannot delete agentos.env:
 it powers off after installing. Detach the CD and delete the image's copy.
 
+IMPORTANT: BMC virtual media (iDRAC, iLO, IPMI) often stays attached across
+power cycles. Detach the CD after an unattended install, or the next boot
+erases the disk and installs again.
+
+CD boot is tested in QEMU/OVMF (including Secure Boot), not yet on real
+iDRAC or iLO hardware.
+
 Boot the installed system in UEFI mode, and remove this stick after installing.
 Under BIOS/CSM, another AgentOS disk or this stick can take over the boot.
