@@ -4,7 +4,7 @@ set -euo pipefail
 DROPIN=/etc/systemd/system/getty@tty1.service.d/agentos.conf
 
 has_access() {
-  [ -s /home/agent/.ssh/authorized_keys ] && return 0
+  grep -qE '^(ssh-|ecdsa-|sk-)' /home/agent/.ssh/authorized_keys 2>/dev/null && return 0
   [[ $(passwd -S agent | awk '{print $2}') == P ]] && return 0
   tailscale status >/dev/null 2>&1 && return 0
   return 1

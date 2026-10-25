@@ -4,7 +4,6 @@ set -euo pipefail
 [ "${1:-final}" = final ] || exit 0
 
 id agent >/dev/null 2>&1 || useradd --create-home --uid 1000 --shell /bin/bash --groups sudo,docker agent
-usermod -aG docker agent
 
 AGENT_PATH=/home/agent/.local/bin:/home/agent/.cargo/bin:/home/agent/.bun/bin:/home/agent/.opencode/bin:/home/agent/.grok/bin:/usr/local/bin:/usr/bin:/bin
 as_agent() {

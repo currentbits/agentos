@@ -33,16 +33,16 @@ rm -rf "$vhome"
 
 # Invariants last, after everything above that could have written state.
 A=/home/agent
-compgen -G '/etc/ssh/ssh_host_*' >/dev/null && fail "SSH host keys baked into image"
-[ -s /etc/machine-id ] && [ "$(cat /etc/machine-id)" != uninitialized ] && fail "machine-id baked into image"
-[ -n "$(ls -A /var/lib/tailscale 2>/dev/null)" ] && fail "tailscale state baked into image"
+if compgen -G '/etc/ssh/ssh_host_*' >/dev/null; then fail "SSH host keys baked into image"; fi
+if [ -s /etc/machine-id ] && [ "$(cat /etc/machine-id)" != uninitialized ]; then fail "machine-id baked into image"; fi
+if [ -n "$(ls -A /var/lib/tailscale 2>/dev/null)" ]; then fail "tailscale state baked into image"; fi
 # Spec: no ~agent/.claude* at all (we deliberately ship no claude settings yet).
-compgen -G "$A/.claude*" >/dev/null && fail "claude state baked into image: $(echo "$A"/.claude*)"
+if compgen -G "$A/.claude*" >/dev/null; then fail "claude state baked into image: $(echo "$A"/.claude*)"; fi
 for f in "$A/.codex/auth.json" \
          "$A/.local/share/opencode/auth.json" "$A/.local/share/opencode/mcp-auth.json" \
          "$A/.grok/auth.json" "$A/.grok/mcp_credentials.json"; do
-  [ -e "$f" ] && fail "CLI auth state baked into image: $f"
+  if [ -e "$f" ]; then fail "CLI auth state baked into image: $f"; fi
 done
-[ -e /etc/agentos/mcp-token ] && fail "mcp-token baked into image (first-boot-only secret)"
+if [ -e /etc/agentos/mcp-token ]; then fail "mcp-token baked into image (first-boot-only secret)"; fi
 
 echo "image invariants OK"

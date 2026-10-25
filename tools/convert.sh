@@ -11,7 +11,7 @@ base="$OUT/agentos-$VER"
 # zstd-compressed qcow2 clusters pack tighter than the default (zlib); fall
 # back to plain -c if this qemu-img build doesn't support the option.
 if qcow2_err=$(qemu-img convert -c -O qcow2 -o compression_type=zstd "$RAW" "$base.qcow2" 2>&1); then
-  :
+  [ -z "$qcow2_err" ] || echo "$qcow2_err" >&2
 else
   echo "convert.sh: compression_type=zstd rejected, falling back to default qcow2 compression:" >&2
   echo "$qcow2_err" >&2

@@ -6,10 +6,12 @@ set -euo pipefail
 . /etc/profile.d/agentos.sh
 
 FAILED=0
+LOG=$(mktemp /tmp/agentos-update.XXXXXX.log)
+trap 'rm -f "$LOG"' EXIT
 step() {  # step <label> <command...>
   local label=$1; shift
-  if "$@" >/tmp/agentos-update.log 2>&1; then echo "ok    $label"
-  else echo "FAIL  $label (see below)"; tail -5 /tmp/agentos-update.log | sed 's/^/      /'; FAILED=1; fi
+  if "$@" >"$LOG" 2>&1; then echo "ok    $label"
+  else echo "FAIL  $label (see below)"; tail -5 "$LOG" | sed 's/^/      /'; FAILED=1; fi
 }
 
 step "apt"      sudo bash -c 'apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 -y -qq full-upgrade'
