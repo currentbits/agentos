@@ -4,11 +4,12 @@
 # Booted as a CD, the Debian-signed GRUB's root/prefix is the whole CD, (cd0), so it reads
 # (cd0)/EFI/debian/grub.cfg from the ISO9660 view, which systemd-repart --el-torito writes empty
 # (repart has no option to add files). This adds that one file to the ISO9660 area below the ESP
-# (byte 32 KiB .. 1 MiB); the GPT, the partitions and the boot catalog are not moved or changed.
+# (byte 32 KiB .. 1 MiB); the partitions and the boot catalog are not moved or changed. It also pads the
+# image to whole 2048-byte CD blocks and moves the backup GPT to the new end (the build fails otherwise).
 # The file selects the installer's ESP by its FAT volume UUID and adds the kernel arguments a CD
 # boot needs (agentos_cdargs, used in KernelCommandLine= in mkosi.conf). grub.cfg is not covered
 # by Secure Boot (shim + GRUB verify only the binaries and the kernel), so this keeps Secure Boot.
-import os, struct, sys, uuid
+import os, struct, sys, uuid, zlib
 
 B = 2048
 ESP = uuid.UUID("c12a7328-f81f-11d2-ba4b-00a0c93ec93b")
@@ -21,17 +22,44 @@ def both32(v): return struct.pack("<I", v) + struct.pack(">I", v)
 
 with open(img, "r+b") as f:
     def rd(off, n): f.seek(off); return f.read(n)
+    def wr(off, data): f.seek(off); f.write(data)
+
+    hdr = bytearray(rd(512, 512))
+    if hdr[:8] != b"EFI PART": die("no GPT")
+    hsize = struct.unpack_from("<I", hdr, 12)[0]
+    ent_lba, n_ent, ent_size = struct.unpack_from("<QII", hdr, 72)
+    ents = rd(ent_lba * 512, n_ent * ent_size)
+
+    # A CD is read in 2048-byte blocks: pad the image to a whole block and move the backup GPT
+    # (header in the last LBA, entries just before it) to the new end, like `sgdisk -e`.
+    size = os.fstat(f.fileno()).st_size
+    if size % B:
+        old_last, ent_secs = size // 512 - 1, -(-n_ent * ent_size // 512)
+        if struct.unpack_from("<Q", hdr, 32)[0] != old_last: die("backup GPT is not in the last LBA")
+        f.truncate(size + B - size % B)
+        last = os.fstat(f.fileno()).st_size // 512 - 1
+        def crc(h): h[16:20] = bytes(4); h[16:20] = struct.pack("<I", zlib.crc32(h[:hsize])); return h
+        struct.pack_into("<Q", hdr, 32, last)                              # AlternateLBA
+        struct.pack_into("<Q", hdr, 48, last - ent_secs - 1)               # LastUsableLBA
+        wr(512, crc(hdr))
+        bak = bytearray(hdr)
+        struct.pack_into("<QQ", bak, 24, last, 1)                          # MyLBA, AlternateLBA
+        struct.pack_into("<Q", bak, 72, last - ent_secs)                   # PartitionEntryLBA
+        wr((old_last - ent_secs) * 512, bytes((ent_secs + 1) * 512))       # drop the old backup GPT
+        wr((last - ent_secs) * 512, ents)
+        wr(last * 512, crc(bak))
+    if os.fstat(f.fileno()).st_size % B: die("image size is not a multiple of 2048")
 
     # ESP: first GPT partition of type ESP (512-byte LBAs), and its FAT volume serial = GRUB fs-uuid
-    hdr = rd(512, 92)
-    if hdr[:8] != b"EFI PART": die("no GPT")
-    ent_lba, n_ent, ent_size = struct.unpack_from("<QII", hdr, 72)
+    starts, esp_off = [], None
     for i in range(n_ent):
-        e = rd(ent_lba * 512 + i * ent_size, ent_size)
-        if uuid.UUID(bytes_le=e[:16]) == ESP:
-            esp_off = struct.unpack_from("<Q", e, 32)[0] * 512
-            break
-    else: die("no ESP partition")
+        e = ents[i * ent_size:(i + 1) * ent_size]
+        if e[:16] == bytes(16): continue                                   # unused entry
+        starts.append(struct.unpack_from("<Q", e, 32)[0])
+        if esp_off is None and uuid.UUID(bytes_le=e[:16]) == ESP: esp_off = starts[-1] * 512
+    if esp_off is None: die("no ESP partition")
+    # The ISO9660 area (32 KiB on) must not overlap the GPT entry array
+    if ent_lba * 512 + n_ent * ent_size > 16 * B: die("GPT entry array reaches into the ISO9660 area")
     bs = rd(esp_off, 512)
     serial = struct.unpack_from("<I", bs, 0x43 if bs[0x52:0x5a] == b"FAT32   " else 0x27)[0]
     fs_uuid = f"{serial >> 16:04X}-{serial & 0xffff:04X}"
@@ -39,6 +67,7 @@ with open(img, "r+b") as f:
     # ISO9660 as written by repart: PVD at block 16, El Torito boot record, terminator; no Joliet
     pvd = bytearray(rd(16 * B, B))
     if pvd[:6] != b"\x01CD001": die("no ISO9660 primary volume descriptor (ElTorito=yes?)")
+    if struct.unpack_from("<H", pvd, 128)[0] != B: die("ISO9660 logical block size is not 2048")
     blk = 17
     while (t := rd(blk * B, 7))[0] != 255:
         if t[1:6] != b"CD001" or t[0] == 2: die(f"unexpected volume descriptor type {t[0]} at block {blk}")
@@ -48,7 +77,7 @@ with open(img, "r+b") as f:
     date = bytes(root[18:25])
     n = struct.unpack_from("<I", pvd, 80)[0]          # first free block: new structures go here
     path_l, path_m, d_root, d_efi, d_deb, d_cfg = range(n, n + 6)
-    if (n + 6) * B > esp_off: die("no room below the ESP")
+    if (n + 6) * B > min(starts) * 512: die("no room below the first partition")
     if rd(n * B, 6 * B).strip(b"\0"): die(f"blocks {n}..{n + 5} are not free")
 
     cfg = (f"# AgentOS installer booted as a CD: root is (cd0); boot from the installer's own ESP.\n"
