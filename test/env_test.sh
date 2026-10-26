@@ -28,3 +28,17 @@ for sh in sh bash; do  # dash and bash split "read" fields differently; the agen
   [ "$got" = 'abc==|abc=|x' ] || { echo "profile.d parse ($sh): got '$got'" >&2; exit 1; }
 done
 echo "profile.d OK"
+
+# validate_setting: the values agentos-config accepts (empty = default, always accepted)
+ok()  { validate_setting "$1" "$2" || { echo "should accept $1='$2'" >&2; exit 1; }; }
+bad() { if validate_setting "$1" "$2" 2>/dev/null; then echo "should reject $1='$2'" >&2; exit 1; fi; }
+ok AGENTOS_LAN_SSH 1; ok AGENTOS_LAN_SSH 0; ok AGENTOS_LAN_SSH ''; bad AGENTOS_LAN_SSH yes; bad AGENTOS_WEB 2
+ok AGENTOS_CONSOLE terminal; bad AGENTOS_CONSOLE gui
+ok AGENTOS_MAX_DESKTOPS 16; bad AGENTOS_MAX_DESKTOPS 17; bad AGENTOS_MAX_DESKTOPS 0; bad AGENTOS_MAX_DESKTOPS 08
+ok AGENTOS_SCREENSHOT_WIDTH 640; ok AGENTOS_SCREENSHOT_WIDTH 1920; bad AGENTOS_SCREENSHOT_WIDTH 639; bad AGENTOS_SCREENSHOT_WIDTH 1921
+ok AGENTOS_DESKTOP_IDLE_MINUTES 0; ok AGENTOS_DESKTOP_IDLE_MINUTES 999999; bad AGENTOS_DESKTOP_IDLE_MINUTES 1000000; bad AGENTOS_DESKTOP_IDLE_MINUTES -1
+ok AGENTOS_WEB_USERS a@b.com; ok AGENTOS_WEB_USERS 'a@b.com,C@github'; bad AGENTOS_WEB_USERS 'a@b.com, c@d'; bad AGENTOS_WEB_USERS nobody
+bad AGENTOS_WEB_USERS 'a@b,'; bad AGENTOS_WEB_USERS $'a@b\nc@d'
+ok SOME_OTHER_KEY anything
+[ "$(validate_setting AGENTOS_WEB x 2>&1)" = "AGENTOS_WEB must be 0 or 1" ]
+echo "validate_setting OK"

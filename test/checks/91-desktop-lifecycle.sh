@@ -58,7 +58,9 @@ check_desktop_conf_published() {
       test "$(stat -c %a /etc/agentos/desktop.conf)" = 644'
 }
 check_desktop_conf_follows_config() {
-  vm 'sudo agentos-config set AGENTOS_MAX_DESKTOPS 3 && sudo agentos-config set AGENTOS_SCREENSHOT_WIDTH 99999 &&
+  # agentos-config now rejects 99999 (check_config_rejects_invalid_values), but a hand-written
+  # agentos.env (cloud user-data) can still hold it, and firstboot must fall back to the default.
+  vm 'sudo agentos-config set AGENTOS_MAX_DESKTOPS 3 && echo AGENTOS_SCREENSHOT_WIDTH=99999 | sudo tee -a /etc/agentos/agentos.env >/dev/null &&
       sudo agentos-config apply && grep -qx MAX_DESKTOPS=3 /etc/agentos/desktop.conf &&
       grep -qx SCREENSHOT_WIDTH=1366 /etc/agentos/desktop.conf;
       rc=$?; sudo agentos-config set AGENTOS_MAX_DESKTOPS 8; sudo agentos-config set AGENTOS_SCREENSHOT_WIDTH 1366;

@@ -76,6 +76,14 @@ if [ -n "$k" ]; then
   trap - EXIT
 fi
 
+# 5b. Web UI settings for agentos-web (runs as agent; agentos.env is root-only). Invalid -> default.
+wu=$(env_get "$AGENTOS_ENV" AGENTOS_WEB_USERS)
+validate_setting AGENTOS_WEB_USERS "$wu" 2>/dev/null || wu=
+we=$(env_get "$AGENTOS_ENV" AGENTOS_WEB | grep -x 0 || echo 1)
+printf 'USERS=%s\nENABLED=%s\n' "$wu" "$we" > /etc/agentos/web.conf.tmp
+chmod 644 /etc/agentos/web.conf.tmp
+mv /etc/agentos/web.conf.tmp /etc/agentos/web.conf
+
 # 6. Console lockout prevention last, so it sees Tailscale. It restarts getty@tty1, which is
 # safe because this runs as its own unit (agentos-config apply restarts the unit).
 /usr/local/sbin/agentos-console-apply

@@ -6,12 +6,18 @@ set -euo pipefail
 
 AK=/home/agent/.ssh/authorized_keys
 
+# VALUE "-" means "read it from stdin": the web UI passes values that way because sudo logs its
+# argv to the journal, and a secret must never land there. An empty secret value clears it.
 cmd_set() {
+  local v=$2
+  if [ "$v" = - ]; then IFS= read -r v || true; fi
+  validate_setting "$1" "$v" || exit 2
   if is_secret_key "$1"; then
     install -d -o agent -g agent -m 700 /home/agent/.config/agentos
-    env_set "$AGENTOS_SECRETS" "$1" "$2"; chown agent:agent "$AGENTOS_SECRETS"; chmod 600 "$AGENTOS_SECRETS"
+    if [ -n "$v" ]; then env_set "$AGENTOS_SECRETS" "$1" "$v"; else env_unset "$AGENTOS_SECRETS" "$1"; fi
+    if [ -f "$AGENTOS_SECRETS" ]; then chown agent:agent "$AGENTOS_SECRETS"; chmod 600 "$AGENTOS_SECRETS"; fi
   else
-    env_set "$AGENTOS_ENV" "$1" "$2"
+    env_set "$AGENTOS_ENV" "$1" "$v"
   fi
 }
 cmd_get() {
@@ -26,6 +32,18 @@ cmd_add_ssh_key() {
   touch "$AK"; grep -qxF "$1" "$AK" || printf '%s\n' "$1" >> "$AK"
   chown agent:agent "$AK"; chmod 600 "$AK"
 }
+# Remove every authorized_keys line whose key has this fingerprint (as `ssh-keygen -l` prints it).
+cmd_remove_ssh_key() {
+  [[ $1 =~ ^SHA256:[A-Za-z0-9+/]{43}$ ]] || { echo "not a SHA256 key fingerprint: $1" >&2; exit 2; }
+  local tmp line fp found=0
+  tmp=$(mktemp "$AK.XXXXXX")
+  while IFS= read -r line || [ -n "$line" ]; do
+    fp=$(ssh-keygen -l -f - <<< "$line" 2>/dev/null | awk '{print $2}') || true
+    if [ "$fp" = "$1" ]; then found=1; else printf '%s\n' "$line" >> "$tmp"; fi
+  done < <(cat "$AK" 2>/dev/null)
+  if [ "$found" = 0 ]; then rm -f "$tmp"; echo "no SSH key with fingerprint $1" >&2; exit 1; fi
+  chown agent:agent "$tmp"; chmod 600 "$tmp"; mv "$tmp" "$AK"
+}
 cmd_github_keys() {
   [[ $1 =~ ^[A-Za-z0-9-]{1,39}$ ]] || { echo "invalid GitHub username" >&2; exit 2; }
   local keys; keys=$(curl -fsS --max-time 15 "https://github.com/$1.keys")
@@ -35,6 +53,9 @@ cmd_github_keys() {
 # Run as its own unit: firstboot ends with agentos-console-apply, which restarts getty@tty1 and
 # would kill a menu running there (agentos-config-tty) if firstboot ran inside it.
 cmd_apply() { systemctl restart agentos-firstboot.service; }
+
+# cmd_set exits on an invalid value: run it in a subshell so the menu survives and says why.
+menu_set() { local err; err=$( (cmd_set "$1" "$2") 2>&1) || whiptail --msgbox "$1 not saved: $err" 10 72; }
 
 menu() {
   while true; do
@@ -50,6 +71,7 @@ menu() {
       console   "Local console: headless or terminal" \
       desktops  "Desktops: max count and screenshot width" \
       reboot    "Auto-reboot for kernel security updates" \
+      webui     "Web UI: tailnet logins allowed to use it" \
       mcptoken  "Show MCP HTTP bearer token" \
       done      "Apply and exit" 3>&1 1>&2 2>&3) || c=done
     case $c in
@@ -70,10 +92,11 @@ menu() {
                  done ;;
       lanssh)    if whiptail --yesno "Open SSH (key-only) on all interfaces?" 8 60; then cmd_set AGENTOS_LAN_SSH 1; else cmd_set AGENTOS_LAN_SSH 0; fi ;;
       console)   m=$(whiptail --menu "Local console mode" 12 60 2 headless "Status + login prompt" terminal "Full-screen terminal after login" 3>&1 1>&2 2>&3) && cmd_set AGENTOS_CONSOLE "$m" || true ;;
-      desktops)  m=$(whiptail --inputbox "Max concurrent desktops (1-16)" 10 60 "$(cmd_get AGENTOS_MAX_DESKTOPS || true)" 3>&1 1>&2 2>&3) && [ -n "$m" ] && cmd_set AGENTOS_MAX_DESKTOPS "$m" || true
-                 w=$(whiptail --inputbox "Screenshot width in px (640-1920, default 1366)" 10 60 "$(cmd_get AGENTOS_SCREENSHOT_WIDTH || true)" 3>&1 1>&2 2>&3) && [ -n "$w" ] && cmd_set AGENTOS_SCREENSHOT_WIDTH "$w" || true
-                 i=$(whiptail --inputbox "Stop an idle, unwatched desktop after this many minutes (0 = never, default 120)" 10 60 "$(cmd_get AGENTOS_DESKTOP_IDLE_MINUTES || true)" 3>&1 1>&2 2>&3) && [ -n "$i" ] && cmd_set AGENTOS_DESKTOP_IDLE_MINUTES "$i" || true ;;
+      desktops)  m=$(whiptail --inputbox "Max concurrent desktops (1-16)" 10 60 "$(cmd_get AGENTOS_MAX_DESKTOPS || true)" 3>&1 1>&2 2>&3) && [ -n "$m" ] && menu_set AGENTOS_MAX_DESKTOPS "$m" || true
+                 w=$(whiptail --inputbox "Screenshot width in px (640-1920, default 1366)" 10 60 "$(cmd_get AGENTOS_SCREENSHOT_WIDTH || true)" 3>&1 1>&2 2>&3) && [ -n "$w" ] && menu_set AGENTOS_SCREENSHOT_WIDTH "$w" || true
+                 i=$(whiptail --inputbox "Stop an idle, unwatched desktop after this many minutes (0 = never, default 120)" 10 60 "$(cmd_get AGENTOS_DESKTOP_IDLE_MINUTES || true)" 3>&1 1>&2 2>&3) && [ -n "$i" ] && menu_set AGENTOS_DESKTOP_IDLE_MINUTES "$i" || true ;;
       reboot)    if whiptail --yesno "Reboot automatically at 04:00 when a kernel update requires it?" 8 70; then cmd_set AGENTOS_AUTO_REBOOT 1; else cmd_set AGENTOS_AUTO_REBOOT 0; fi ;;
+      webui)     u=$(whiptail --inputbox "Tailnet logins allowed to use the web UI, comma-separated (you@example.com). Empty = nobody." 10 72 "$(cmd_get AGENTOS_WEB_USERS || true)" 3>&1 1>&2 2>&3) && menu_set AGENTOS_WEB_USERS "$u" || true ;;
       mcptoken)  whiptail --msgbox "$(cat /etc/agentos/mcp-token)\n\nThis token (and any view_url built from it) gives full control of the desktops: treat it like a root password." 11 72 ;;
       done)      cmd_apply || whiptail --msgbox "Some settings failed to apply (see: journalctl -u agentos-firstboot). Tailscale key wrong?" 9 72
                  return ;;
@@ -85,10 +108,13 @@ case "${1:-}" in
   "")              menu ;;
   set)             [ $# -eq 3 ] || { echo "usage: agentos-config set KEY VALUE" >&2; exit 2; }; cmd_set "$2" "$3" ;;
   get)             [ $# -eq 2 ] || { echo "usage: agentos-config get KEY" >&2; exit 2; }; cmd_get "$2" ;;
-  add-ssh-key)     cmd_add_ssh_key "${2:?usage: agentos-config add-ssh-key '<pubkey>'}" ;;
+  add-ssh-key)     k=${2:?usage: agentos-config add-ssh-key KEY (or - to read it from stdin)}
+                   if [ "$k" = - ]; then IFS= read -r k || true; fi
+                   cmd_add_ssh_key "$k" ;;
+  remove-ssh-key)  cmd_remove_ssh_key "${2:?usage: agentos-config remove-ssh-key SHA256:...}" ;;
   github-keys)     cmd_github_keys "${2:?usage: agentos-config github-keys <user>}" ;;
   password)        passwd agent ;;
   apply)           cmd_apply ;;
   show-mcp-token)  cat /etc/agentos/mcp-token ;;
-  *)               echo "usage: agentos-config [set KEY VALUE|get KEY|add-ssh-key KEY|github-keys USER|password|apply|show-mcp-token]" >&2; exit 2 ;;
+  *)               echo "usage: agentos-config [set KEY VALUE|-|get KEY|add-ssh-key KEY|-|remove-ssh-key FINGERPRINT|github-keys USER|password|apply|show-mcp-token]" >&2; exit 2 ;;
 esac

@@ -88,3 +88,41 @@ check_autologin_dropin_wired_to_config_tty() {
       sudo usermod -p "$h" agent; mv ~/.ssh/ak.bak ~/.ssh/authorized_keys; sudo agentos-console-apply
       exit $r'
 }
+
+check_config_rejects_invalid_values() {
+  vm 'b=$(sudo agentos-config get AGENTOS_MAX_DESKTOPS)
+      e=$(sudo agentos-config set AGENTOS_MAX_DESKTOPS 99 2>&1); rc=$?
+      test "$rc" = 2 && test "$e" = "AGENTOS_MAX_DESKTOPS must be a number from 1 to 16" &&
+      test "$(sudo agentos-config get AGENTOS_MAX_DESKTOPS)" = "$b" &&
+      ! sudo agentos-config set AGENTOS_WEB_USERS not-a-login 2>/dev/null &&
+      ! sudo agentos-config set AGENTOS_WEB 2 2>/dev/null &&
+      ! sudo agentos-config set AGENTOS_CONSOLE gui 2>/dev/null'
+}
+check_config_secret_from_stdin_and_clear() {
+  # "-" reads the value from stdin, so it never appears in sudo's journal line; "" clears a secret.
+  vm 'printf %s sk-stdin-9 | sudo agentos-config set STDIN_TEST_API_KEY - &&
+      grep -qx STDIN_TEST_API_KEY=sk-stdin-9 ~/.config/agentos/secrets.env &&
+      ! sudo journalctl -b --no-pager | grep -q sk-stdin-9 &&
+      sudo agentos-config set STDIN_TEST_API_KEY "" &&
+      ! grep -q "^STDIN_TEST_API_KEY=" ~/.config/agentos/secrets.env'
+}
+check_remove_ssh_key() {
+  vm 'd=$(mktemp -d) && ssh-keygen -q -t ed25519 -N "" -C rm-test -f "$d/k" &&
+      fp=$(ssh-keygen -lf "$d/k.pub" | cut -d" " -f2) && n=$(grep -c . ~/.ssh/authorized_keys) &&
+      sudo agentos-config add-ssh-key - < "$d/k.pub" && grep -q rm-test ~/.ssh/authorized_keys &&
+      sudo agentos-config remove-ssh-key "$fp" && ! grep -q rm-test ~/.ssh/authorized_keys &&
+      test "$(grep -c . ~/.ssh/authorized_keys)" = "$n" &&
+      test "$(stat -c "%U %a" ~/.ssh/authorized_keys)" = "agent 600" &&
+      ! sudo agentos-config remove-ssh-key "$fp" 2>/dev/null &&
+      ! sudo agentos-config remove-ssh-key SHA256:bad 2>/dev/null; rc=$?; rm -rf "$d"; exit $rc'
+}
+check_web_conf_follows_config() {
+  local rc=0
+  vm 'sudo agentos-config set AGENTOS_WEB_USERS "A@example.com,b@example.org" && sudo agentos-config apply &&
+      grep -qx "USERS=A@example.com,b@example.org" /etc/agentos/web.conf && grep -qx ENABLED=1 /etc/agentos/web.conf &&
+      test "$(stat -c "%U %a" /etc/agentos/web.conf)" = "root 644" &&
+      echo "AGENTOS_WEB_USERS=not a login" | sudo tee -a /etc/agentos/agentos.env >/dev/null &&
+      sudo agentos-config apply && grep -qx "USERS=" /etc/agentos/web.conf' || rc=1
+  vm 'sudo agentos-config set AGENTOS_WEB_USERS "" && sudo agentos-config apply' || rc=1
+  return "$rc"
+}
