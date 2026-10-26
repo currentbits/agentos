@@ -30,6 +30,16 @@ check_autologin_when_only_comment_in_authorized_keys() {
       sudo usermod -p "$h" agent; mv ~/.ssh/ak.bak ~/.ssh/authorized_keys; sudo agentos-console-apply
       test ! -e /etc/systemd/system/getty@tty1.service.d/agentos.conf && exit $r'
 }
+check_no_autologin_with_option_prefixed_key() {
+  # A key line with a leading option string (e.g. from="...") still counts as access.
+  vm 'h=$(sudo getent shadow agent | cut -d: -f2); [ -n "$h" ] || exit 1
+      mv ~/.ssh/authorized_keys ~/.ssh/ak.bak
+      echo "from=\"10.0.0.0/8\" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyForTestOnly0000000000000000000000 t@t" > ~/.ssh/authorized_keys
+      sudo usermod -p "!" agent
+      sudo agentos-console-apply; r=0; test ! -e /etc/systemd/system/getty@tty1.service.d/agentos.conf || r=1
+      sudo usermod -p "$h" agent; mv ~/.ssh/ak.bak ~/.ssh/authorized_keys; sudo agentos-console-apply
+      exit $r'
+}
 check_autologin_when_no_access() {
   # A password also counts as access (installer-written disks have one): lock it, restore the exact hash after.
   # An empty saved hash would make the restore leave a passwordless account: fail before changing anything.
