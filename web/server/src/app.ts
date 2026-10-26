@@ -8,6 +8,8 @@ import { authHook, parseTailnetName, readWebConf, type WebConf } from './auth.js
 import { execRunner, HttpError, type Runner } from './run.js';
 // Route modules (one import per task):
 import { settingsRoutes } from './settings.js';
+import { sessionRoutes } from './sessions.js';
+import { terminalRoutes } from './terminal.js';
 
 export interface Deps {
   run: Runner;
@@ -68,6 +70,8 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
 
   // API routes (one line per task):
   settingsRoutes(app, deps);
+  sessionRoutes(app, deps);
+  terminalRoutes(app, deps);
 
   if (deps.novncRoot && existsSync(deps.novncRoot)) {
     await app.register(fastifyStatic, { root: deps.novncRoot, prefix: '/novnc/', decorateReply: false });
