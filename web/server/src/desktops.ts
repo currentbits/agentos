@@ -83,7 +83,7 @@ export async function destroyDesktop(deps: Deps, n: number, login: string): Prom
 }
 
 // scrot --thumb 25 also writes a 25 % copy (1920 px -> 480 px wide) named <file>-thumb.png.
-export async function thumbnail(deps: Deps, n: number): Promise<Buffer> {
+async function captureThumbnail(deps: Deps, n: number): Promise<Buffer> {
   await needActive(deps, n);
   const d = await mkdtemp(join(tmpdir(), 'agentos-web-thumb-'));
   try {
@@ -95,6 +95,20 @@ export async function thumbnail(deps: Deps, n: number): Promise<Buffer> {
   } finally {
     await rm(d, { recursive: true, force: true });
   }
+}
+
+// Single-flight per desktop: concurrent requests (the UI polls thumbnails every 5s, and more than
+// one tab may be open) share one scrot call instead of piling up concurrent screenshots.
+// ponytail: no short-lived result cache beyond the in-flight window; add one (~2s) if polling
+// from several tabs still measurably doubles scrot calls.
+const inFlight = new Map<number, Promise<Buffer>>();
+
+export function thumbnail(deps: Deps, n: number): Promise<Buffer> {
+  const existing = inFlight.get(n);
+  if (existing) return existing;
+  const p = captureThumbnail(deps, n).finally(() => inFlight.delete(n));
+  inFlight.set(n, p);
+  return p;
 }
 
 export function desktopRoutes(app: FastifyInstance, deps: Deps): void {

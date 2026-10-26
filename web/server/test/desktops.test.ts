@@ -1,7 +1,8 @@
+import { writeFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
-import { lowestFree, parseActive, parseDesktopConf } from '../src/desktops.js';
-import { fakeDeps, HM } from './helpers.js';
+import { createDesktop, listDesktops, lowestFree, parseActive, parseDesktopConf, thumbnail } from '../src/desktops.js';
+import { fakeDeps, HM, LOGIN } from './helpers.js';
 
 describe('desktop helpers', () => {
   it('parses desktop.conf with defaults and clamps', () => {
@@ -20,5 +21,74 @@ describe('desktop helpers', () => {
     expect((await app.inject({ method: 'DELETE', url: '/api/desktops/1;reboot', headers: HM })).statusCode).toBe(400);
     expect((await app.inject({ method: 'DELETE', url: '/api/desktops/2', headers: HM })).statusCode).toBe(404);
     expect(calls.every((c) => c.argv[1] === 'list-units')).toBe(true);
+  });
+});
+
+describe('createDesktop', () => {
+  it('starts the lowest free number, waits for it to come up, and audits it without a token', async () => {
+    const { deps, calls, audits } = fakeDeps((argv) => {
+      if (argv[1] === 'list-units') return { stdout: 'agentos-desktop@1.service loaded active running x\n' };
+      if (argv[0] === 'xdotool') return { code: 0 };
+      return {};
+    });
+    const r = await createDesktop(deps, LOGIN);
+    expect(r).toEqual({ id: 2 });
+    expect(audits).toEqual([`${LOGIN} desktop-create 2`]);
+    expect(calls.some((c) => c.argv.includes('start') && c.argv.includes('agentos-desktop@2.service'))).toBe(true);
+  });
+
+  it('409s when every desktop is already in use', async () => {
+    const active = Array.from({ length: 8 }, (_, i) => `agentos-desktop@${i + 1}.service loaded active running x\n`).join('');
+    const { deps } = fakeDeps((argv) => (argv[1] === 'list-units' ? { stdout: active } : {}));
+    await expect(createDesktop(deps, LOGIN)).rejects.toMatchObject({ status: 409 });
+  });
+});
+
+describe('listDesktops', () => {
+  it('reports viewer counts from ss, and null idle time with no .last file', async () => {
+    const { deps } = fakeDeps((argv) => {
+      if (argv[1] === 'list-units') return { stdout: 'agentos-desktop@1.service loaded active running x\n' };
+      if (argv[0] === 'ss') return { stdout: 'line-one\nline-two\n' };
+      return {};
+    });
+    expect(await listDesktops(deps)).toEqual([{ id: 1, idleSeconds: null, idleLimitMinutes: 120, viewers: 2 }]);
+  });
+});
+
+describe('thumbnail', () => {
+  it('shares one scrot call across concurrent requests for the same desktop', async () => {
+    let scrotCalls = 0;
+    const { deps } = fakeDeps((argv) => {
+      if (argv[1] === 'list-units') return { stdout: 'agentos-desktop@1.service loaded active running x\n' };
+      if (argv[0] === 'scrot') {
+        scrotCalls++;
+        const target = argv[argv.length - 1];
+        writeFileSync(target.replace(/\.png$/, '-thumb.png'), 'fake-png');
+        return { code: 0 };
+      }
+      return {};
+    });
+    const [a, b, c] = await Promise.all([thumbnail(deps, 1), thumbnail(deps, 1), thumbnail(deps, 1)]);
+    expect(scrotCalls).toBe(1);
+    expect(a.toString()).toBe('fake-png');
+    expect(b).toBe(a);
+    expect(c).toBe(a);
+  });
+
+  it('runs a fresh scrot for a later, non-concurrent request', async () => {
+    let scrotCalls = 0;
+    const { deps } = fakeDeps((argv) => {
+      if (argv[1] === 'list-units') return { stdout: 'agentos-desktop@1.service loaded active running x\n' };
+      if (argv[0] === 'scrot') {
+        scrotCalls++;
+        const target = argv[argv.length - 1];
+        writeFileSync(target.replace(/\.png$/, '-thumb.png'), 'fake-png');
+        return { code: 0 };
+      }
+      return {};
+    });
+    await thumbnail(deps, 1);
+    await thumbnail(deps, 1);
+    expect(scrotCalls).toBe(2);
   });
 });

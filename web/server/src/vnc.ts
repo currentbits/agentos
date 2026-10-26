@@ -25,11 +25,13 @@ export function pipeSockets(client: WebSocket, connect: () => Promise<WebSocket>
   client.on('close', () => upstream?.close());
   connect().then((up) => {
     upstream = up;
+    // Attach the error listener before any close() below: closing a still-CONNECTING ws (ws 8.x)
+    // emits 'error' asynchronously, and an 'error' event with no listener crashes the process.
+    up.on('error', () => client.close(1011, 'upstream error'));
     if (client.readyState !== WebSocket.OPEN) return up.close();
     up.on('open', () => { for (const d of pending.splice(0)) up.send(d); });
     up.on('message', (d: Buffer) => client.readyState === WebSocket.OPEN && client.send(d));
     up.on('close', () => client.close());
-    up.on('error', () => client.close(1011, 'upstream error'));
   }, (e: Error) => client.close(1011, e.message.slice(0, 120)));
 }
 
