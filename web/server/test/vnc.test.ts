@@ -109,6 +109,30 @@ it('never leaks the token to the client, even when the upstream connection is re
   await app.close();
 });
 
+// Regression: the reject branch used to forward e.message verbatim. A missing token file makes
+// readFile reject with an ENOENT naming the full path, so that path (and anything else a future
+// error might embed) must not reach the client — only a recognized HttpError's own message may.
+it('maps a reject-path error to a fixed close reason, never the raw message (which could name the token-file path)', async () => {
+  const token = 'cd'.repeat(16);
+  const tokens = mkdtempSync(join(tmpdir(), 'vnc-'));
+  // No token file for desktop 1: readFile(`${tokens}/1`) rejects with a plain Error naming `tokens`.
+  const { deps } = fakeDeps((argv) => (argv[1] === 'list-units' ? { stdout: 'agentos-desktop@1.service loaded active running x\n' } : {}));
+  const app = Fastify();
+  app.decorateRequest('login', '');
+  await app.register(fastifyWebsocket);
+  vncRoutes(app, deps, 'ws://127.0.0.1:1/websockify', tokens);
+  await app.ready();
+
+  const ws = await app.injectWS('/api/desktops/1/vnc');
+  const [code, reason] = await new Promise<[number, string]>((r) =>
+    ws.once('close', (c: number, b: Buffer) => r([c, b.toString()])));
+  expect(code).toBe(1011);
+  expect(reason).toBe('proxy error');
+  expect(reason).not.toContain(tokens);
+  expect(reason).not.toContain(token);
+  await app.close();
+});
+
 it('is rejected by the app auth hook before reaching the token or upstream', async () => {
   const { deps } = fakeDeps();
   const app = await buildApp(deps);

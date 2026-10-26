@@ -1,4 +1,5 @@
 import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { createDesktop, listDesktops, lowestFree, parseActive, parseDesktopConf, thumbnail } from '../src/desktops.js';
@@ -90,5 +91,47 @@ describe('thumbnail', () => {
     await thumbnail(deps, 1);
     await thumbnail(deps, 1);
     expect(scrotCalls).toBe(2);
+  });
+
+  it('clears the in-flight entry after a failed scrot, so the next call retries instead of reusing the rejection', async () => {
+    let scrotCalls = 0;
+    const { deps } = fakeDeps((argv) => {
+      if (argv[1] === 'list-units') return { stdout: 'agentos-desktop@1.service loaded active running x\n' };
+      if (argv[0] === 'scrot') { scrotCalls++; return { code: 1, stderr: 'boom' }; }
+      return {};
+    });
+    await expect(thumbnail(deps, 1)).rejects.toMatchObject({ status: 500 });
+    await expect(thumbnail(deps, 1)).rejects.toMatchObject({ status: 500 });
+    expect(scrotCalls).toBe(2);   // a stuck in-flight entry would have reused the first rejection without re-running scrot
+  });
+});
+
+describe('desktop routes never expose the VNC token', () => {
+  it('puts the token in no response body or header, across GET/POST/DELETE/thumbnail', async () => {
+    const token = 'de'.repeat(16);
+    const { deps } = fakeDeps((argv) => {
+      if (argv[1] === 'list-units') return { stdout: 'agentos-desktop@1.service loaded active running x\n' };
+      if (argv[0] === 'ss') return { stdout: '' };
+      if (argv[0] === 'scrot') {
+        const target = argv[argv.length - 1];
+        writeFileSync(target.replace(/\.png$/, '-thumb.png'), 'fake-png-bytes');
+        return { code: 0 };
+      }
+      return {};
+    });
+    // A real token file, wired through Deps exactly as the running service would see it; none of
+    // the desktop routes below ever read it, but this guards against that ever changing silently.
+    writeFileSync(join(deps.vncTokenDir, '1'), `${token}: localhost:5901\n`);
+    const app = await buildApp(deps);
+
+    const list = await app.inject({ url: '/api/desktops', headers: HM });
+    const created = await app.inject({ method: 'POST', url: '/api/desktops', headers: HM });
+    const destroyed = await app.inject({ method: 'DELETE', url: '/api/desktops/1', headers: HM });
+    const thumb = await app.inject({ url: '/api/desktops/1/thumbnail', headers: HM });
+
+    for (const r of [list, created, destroyed, thumb]) {
+      expect(r.body).not.toContain(token);
+      expect(JSON.stringify(r.headers)).not.toContain(token);
+    }
   });
 });

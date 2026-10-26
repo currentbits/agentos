@@ -11,7 +11,7 @@ import { settingsRoutes } from './settings.js';
 import { sessionRoutes } from './sessions.js';
 import { terminalRoutes } from './terminal.js';
 import { desktopRoutes } from './desktops.js';
-import { vncRoutes } from './vnc.js';
+import { TOKEN_DIR, vncRoutes } from './vnc.js';
 
 export interface Deps {
   run: Runner;
@@ -21,6 +21,7 @@ export interface Deps {
   home: string;
   uiRoot: string | null;
   novncRoot: string | null;
+  vncTokenDir: string;
 }
 
 export function cachedTailnetName(run: Runner, ttlMs = 60_000): () => Promise<string | null> {
@@ -47,6 +48,7 @@ export function defaultDeps(): Deps {
     home: '/home/agent',
     uiRoot: '/usr/local/lib/agentos/web/ui',
     novncRoot: '/usr/share/novnc',
+    vncTokenDir: TOKEN_DIR,
   };
 }
 
@@ -75,7 +77,7 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   sessionRoutes(app, deps);
   terminalRoutes(app, deps);
   desktopRoutes(app, deps);
-  vncRoutes(app, deps);
+  vncRoutes(app, deps, undefined, deps.vncTokenDir);
 
   if (deps.novncRoot && existsSync(deps.novncRoot)) {
     await app.register(fastifyStatic, { root: deps.novncRoot, prefix: '/novnc/', decorateReply: false });

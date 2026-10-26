@@ -28,6 +28,7 @@ export function fakeDeps(reply: (argv: string[], opts?: RunOpts) => Partial<RunR
     home: realpathSync(mkdtempSync(join(tmpdir(), 'agentos-web-home-'))),
     uiRoot: null,
     novncRoot: null,
+    vncTokenDir: realpathSync(mkdtempSync(join(tmpdir(), 'agentos-web-vnc-'))),
     ...over,
   };
   return { deps, calls, audits };

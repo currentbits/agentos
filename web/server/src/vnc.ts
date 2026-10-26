@@ -5,6 +5,7 @@ import type { FastifyInstance } from 'fastify';
 import WebSocket from 'ws';
 import type { Deps } from './app.js';
 import { activeDesktops, desktopNumber } from './desktops.js';
+import { HttpError } from './run.js';
 
 export const TOKEN_DIR = '/run/agentos/vnc';
 export const WEBSOCKIFY = 'ws://127.0.0.1:6080/websockify';
@@ -32,7 +33,10 @@ export function pipeSockets(client: WebSocket, connect: () => Promise<WebSocket>
     up.on('open', () => { for (const d of pending.splice(0)) up.send(d); });
     up.on('message', (d: Buffer) => client.readyState === WebSocket.OPEN && client.send(d));
     up.on('close', () => client.close());
-  }, (e: Error) => client.close(1011, e.message.slice(0, 120)));
+  // Never forward e.message verbatim: a readFile failure on the token file names its path, and
+  // future errors are not guaranteed to stay harmless. Only a recognized HttpError's message
+  // (always written by this codebase, never raw I/O detail) reaches the client.
+  }, (e: unknown) => client.close(1011, e instanceof HttpError ? e.message.slice(0, 120) : 'proxy error'));
 }
 
 export function vncRoutes(app: FastifyInstance, deps: Deps, upstreamBase = WEBSOCKIFY, tokenDir = TOKEN_DIR): void {
