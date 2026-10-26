@@ -9,6 +9,7 @@ import { Sessions } from './pages/Sessions';
 import { Terminal } from './pages/Terminal';
 import { Desktops } from './pages/Desktops';
 import { DesktopView } from './pages/DesktopView';
+import { System } from './pages/System';
 
 const NAV = [['/', 'Overview'], ['/sessions', 'Sessions'], ['/desktops', 'Desktops'], ['/settings', 'Settings'], ['/system', 'System']];
 
@@ -18,6 +19,7 @@ function page(path: string, me: Me | null) {
     case 'settings': return <Settings me={me} />;
     case 'sessions': return arg ? <Terminal id={decodeURIComponent(arg)} /> : <Sessions />;
     case 'desktops': return arg ? <DesktopView n={Number(arg)} /> : <Desktops />;
+    case 'system': return <System me={me} />;
     default: return <Overview />;
   }
 }
