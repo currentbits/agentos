@@ -46,7 +46,7 @@ md=$(env_get "$AGENTOS_ENV" AGENTOS_MAX_DESKTOPS | grep -xE '[1-9]|1[0-6]' || ec
 sw=$(env_get "$AGENTOS_ENV" AGENTOS_SCREENSHOT_WIDTH | grep -xE '6[4-9][0-9]|[7-9][0-9]{2}|1[0-8][0-9]{2}|19[01][0-9]|1920' || echo 1366)
 # Idle desktop reaper (reap-desktops): minutes of no MCP/VNC-viewer activity before it stops a
 # desktop; 0 disables it.
-im=$(env_get "$AGENTOS_ENV" AGENTOS_DESKTOP_IDLE_MINUTES | grep -xE '[0-9]+' || echo 120)
+im=$(env_get "$AGENTOS_ENV" AGENTOS_DESKTOP_IDLE_MINUTES | grep -xE '0|[1-9][0-9]{0,5}' || echo 120)
 printf 'MAX_DESKTOPS=%s\nSCREENSHOT_WIDTH=%s\nIDLE_MINUTES=%s\n' "$md" "$sw" "$im" > /etc/agentos/desktop.conf
 chmod 644 /etc/agentos/desktop.conf
 
@@ -65,6 +65,7 @@ ts_rc=0
 k=$(env_get "$AGENTOS_ENV" TS_AUTHKEY)
 if [ -n "$k" ]; then
   kf=$(mktemp /run/agentos-tsauth.XXXXXX)
+  trap 'rm -f "$kf"' EXIT
   printf '%s' "$k" > "$kf"
   if tailscale up --timeout=60s --auth-key="file:$kf" --hostname="$(hostname)" --ssh; then
     env_unset "$AGENTOS_ENV" TS_AUTHKEY
@@ -72,6 +73,7 @@ if [ -n "$k" ]; then
     ts_rc=$?
   fi
   rm -f "$kf"
+  trap - EXIT
 fi
 
 # 6. Console lockout prevention last, so it sees Tailscale. It restarts getty@tty1, which is

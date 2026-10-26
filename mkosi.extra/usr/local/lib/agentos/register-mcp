@@ -18,11 +18,10 @@ flock 9
 # original (keeping its mode), so a reader never sees a half-written file.
 append_atomically() {
   local f=$1; shift
+  f=$(readlink -f "$f")
   local tmp; tmp=$(mktemp "$f.XXXXXX")
-  cp -p "$f" "$tmp"
   # shellcheck disable=SC2059 # the format string is a fixed caller-supplied literal, not data
-  printf "$@" >> "$tmp"
-  mv "$tmp" "$f"
+  cp -p "$f" "$tmp" && printf "$@" >>"$tmp" && mv "$tmp" "$f" || { rm -f "$tmp"; return 1; }
 }
 
 # Claude Code (user scope, ~/.claude.json)

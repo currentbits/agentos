@@ -10,7 +10,7 @@ ExecStart=/usr/local/lib/agentos/desktop-session %i
 ExecStartPost=+/usr/local/lib/agentos/vnc-token add %i
 # No "+": runs as User=agent, so the file is agent-owned like every other write to this path
 # (agentos-computer's touch_last running as agent must be able to reopen it later).
-ExecStartPost=/usr/bin/touch /run/agentos/desktops/%i.last
+ExecStartPost=-/usr/bin/touch /run/agentos/desktops/%i.last
 ExecStopPost=+/usr/local/lib/agentos/vnc-token del %i
 KillMode=control-group
 Restart=no

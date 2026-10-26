@@ -68,8 +68,11 @@ def active():
 def touch_last(n):
     """Mark desktop n as just used, for the idle reaper (reap-desktops)."""
     path = f"{LAST_DIR}/{n}.last"
-    open(path, "a").close()
-    os.utime(path, None)
+    try:
+        open(path, "a").close()
+        os.utime(path, None)
+    except OSError:
+        pass
 
 
 def need(desktop):
