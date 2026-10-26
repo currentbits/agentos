@@ -65,10 +65,11 @@ export function decide(f: RequestFacts, users: string[], tsName: string | null):
   if (!login) return { ok: false, status: 401, body: 'no Tailscale identity' };
   if (users.length === 0) return { ok: false, status: 403, body: notConfiguredPage(login), html: true };
   if (!users.includes(login)) return { ok: false, status: 403, body: `${login} is not allowed` };
-  const mutating = ['POST', 'PUT', 'DELETE', 'PATCH'].includes(f.method);
-  if (mutating || f.upgrade) {
+  // Fail closed: every method except the safe ones needs CSRF checks, not just a hardcoded list.
+  const safe = f.method === 'GET' || f.method === 'HEAD' || f.method === 'OPTIONS';
+  if (!safe || f.upgrade) {
     if (f.origin !== expectedOrigin(f.host!, tsName)) return { ok: false, status: 403, body: 'bad origin' };
-    if (mutating && f.xAgentOS !== '1') return { ok: false, status: 403, body: 'missing X-AgentOS header' };
+    if (!safe && f.xAgentOS !== '1') return { ok: false, status: 403, body: 'missing X-AgentOS header' };
   }
   return { ok: true, login };
 }

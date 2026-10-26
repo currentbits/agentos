@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decide, notConfiguredPage, parseTailnetName, parseWebConf, type RequestFacts } from '../src/auth.js';
+import { decide, notConfiguredPage, parseTailnetName, parseWebConf, readWebConf, type RequestFacts } from '../src/auth.js';
 
 const TS = 'box.tail1234.ts.net';
 const base: RequestFacts = { method: 'GET', host: TS, login: 'alice@example.com', origin: undefined, xAgentOS: undefined, upgrade: false };
@@ -62,6 +62,10 @@ describe('CSRF', () => {
   it('GET needs no Origin', () => {
     expect(decide(base, users, TS).ok).toBe(true);
   });
+  it('fails closed: PATCH without X-AgentOS is rejected, HEAD passes untouched', () => {
+    expect(decide({ ...post, method: 'PATCH', xAgentOS: undefined }, users, TS)).toMatchObject({ ok: false, status: 403, body: 'missing X-AgentOS header' });
+    expect(decide({ ...base, method: 'HEAD' }, users, TS)).toEqual({ ok: true, login: 'alice@example.com' });
+  });
 });
 
 describe('config parsing', () => {
@@ -74,5 +78,8 @@ describe('config parsing', () => {
     expect(parseTailnetName('{"Self":{"DNSName":"box.tail1234.ts.net."}}')).toBe('box.tail1234.ts.net');
     expect(parseTailnetName('{"Self":{"DNSName":""}}')).toBeNull();
     expect(parseTailnetName('not json')).toBeNull();
+  });
+  it('readWebConf on a missing file falls back to not-configured', () => {
+    expect(readWebConf('/nonexistent/path/web.conf')).toEqual({ users: [], enabled: true, serve: '' });
   });
 });

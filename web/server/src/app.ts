@@ -21,11 +21,14 @@ export interface Deps {
 export function cachedTailnetName(run: Runner, ttlMs = 60_000): () => Promise<string | null> {
   let value: string | null = null;
   let at = 0;
+  let inflight: Promise<string | null> | null = null;   // single-flight: share one call on expiry
   return async () => {
-    if (Date.now() - at > ttlMs) {
-      value = parseTailnetName((await run(['tailscale', 'status', '--json'], { timeoutMs: 5000 })).stdout);
-      at = Date.now();
-    }
+    if (Date.now() - at <= ttlMs) return value;
+    inflight ??= run(['tailscale', 'status', '--json'], { timeoutMs: 5000 })
+      .then((r) => parseTailnetName(r.stdout))
+      .finally(() => { inflight = null; });
+    value = await inflight;
+    at = Date.now();
     return value;
   };
 }
@@ -45,6 +48,14 @@ export function defaultDeps(): Deps {
 export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   const app = Fastify({ logger: { level: 'warn' }, bodyLimit: 1024 * 1024 });
   app.decorateRequest('login', '');
+  // Anti-clickjacking headers on every response, including 401/403 and static files.
+  app.addHook('onSend', async (_req, reply, payload) => {
+    reply.header('X-Frame-Options', 'DENY');
+    reply.header('Content-Security-Policy', "frame-ancestors 'none'");
+    reply.header('X-Content-Type-Options', 'nosniff');
+    reply.header('Referrer-Policy', 'no-referrer');
+    return payload;
+  });
   app.addHook('onRequest', authHook(deps.webConf, deps.tsName));
   app.setErrorHandler((err, _req, reply) => {
     if (err instanceof HttpError) return reply.code(err.status).send({ error: err.message, field: err.field });

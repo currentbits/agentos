@@ -2,8 +2,9 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { buildApp } from '../src/app.js';
+import { buildApp, cachedTailnetName } from '../src/app.js';
 import { parseWebConf } from '../src/auth.js';
+import type { Runner } from '../src/run.js';
 import { fakeDeps, H, HM, LOGIN } from './helpers.js';
 
 // /api/nope has no route: an authorized request reaches the 404 handler, a rejected one never does.
@@ -31,6 +32,18 @@ describe('HTTP auth through the app', () => {
     expect((await post({ ...H, origin: HM.origin })).statusCode).toBe(403);
     expect((await post({ ...HM, origin: 'https://evil.example' })).statusCode).toBe(403);
     expect((await post(HM)).statusCode).toBe(404);
+  });
+
+  it('rejects a duplicate or comma-joined identity header, even when the first login is allowlisted', async () => {
+    const app = await buildApp(fakeDeps().deps);
+    const r = await app.inject({ url: '/api/nope', headers: { ...H, 'tailscale-user-login': `${LOGIN}, bob@example.com` } });
+    expect(r.statusCode).toBe(403);
+  });
+
+  it('rejects a bad Host', async () => {
+    const app = await buildApp(fakeDeps().deps);
+    const r = await app.inject({ url: '/api/nope', headers: { ...H, host: 'evil.example:7070' } });
+    expect(r.statusCode).toBe(403);
   });
 
   it('serves the UI and noVNC behind auth, with an SPA fallback and JSON 404 under /api', async () => {
@@ -66,5 +79,44 @@ describe('WebSocket upgrades', () => {
     await expect(app.injectWS(url, { headers: { ...H, origin: 'https://evil.example' } })).rejects.toThrow(/403/);
     await expect(app.injectWS(url, { headers: H })).rejects.toThrow(/403/);
     await expect(app.injectWS(url, { headers: { ...H, origin: HM.origin } })).rejects.toThrow(/404/);
+  });
+
+  it('rejects a WebSocket upgrade in not-configured mode', async () => {
+    const app = await buildApp(fakeDeps(() => ({}), { webConf: () => parseWebConf('') }).deps);
+    await app.ready();
+    await expect(app.injectWS('/api/nope', { headers: { ...H, origin: HM.origin } })).rejects.toThrow(/403/);
+  });
+});
+
+describe('response headers', () => {
+  it('sets anti-framing headers on every response: a static file, a 401, and the not-configured page', async () => {
+    const ui = mkdtempSync(join(tmpdir(), 'ui-'));
+    writeFileSync(join(ui, 'index.html'), '<div id="root"></div>');
+    const app = await buildApp(fakeDeps(() => ({}), { uiRoot: ui }).deps);
+    const okResp = await app.inject({ url: '/', headers: H });
+    const unauthResp = await app.inject({ url: '/', headers: { host: H.host } });
+    const notConfiguredApp = await buildApp(fakeDeps(() => ({}), { webConf: () => parseWebConf('') }).deps);
+    const notConfiguredResp = await notConfiguredApp.inject({ url: '/', headers: H });
+    for (const r of [okResp, unauthResp, notConfiguredResp]) {
+      expect(r.headers['x-frame-options']).toBe('DENY');
+      expect(r.headers['content-security-policy']).toBe("frame-ancestors 'none'");
+      expect(r.headers['x-content-type-options']).toBe('nosniff');
+      expect(r.headers['referrer-policy']).toBe('no-referrer');
+    }
+  });
+});
+
+describe('cachedTailnetName', () => {
+  it('shares one `tailscale status` call among concurrent callers after the cache expires', async () => {
+    let calls = 0;
+    const run: Runner = async () => {
+      calls++;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return { code: 0, stdout: '{"Self":{"DNSName":"box.tail1234.ts.net."}}', stderr: '' };
+    };
+    const tsName = cachedTailnetName(run, 0);
+    const results = await Promise.all(Array.from({ length: 5 }, () => tsName()));
+    expect(calls).toBe(1);
+    expect(results).toEqual(Array(5).fill('box.tail1234.ts.net'));
   });
 });
