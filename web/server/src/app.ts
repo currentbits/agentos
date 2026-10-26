@@ -12,6 +12,7 @@ import { sessionRoutes } from './sessions.js';
 import { terminalRoutes } from './terminal.js';
 import { desktopRoutes } from './desktops.js';
 import { TOKEN_DIR, vncRoutes } from './vnc.js';
+import { systemRoutes } from './system.js';
 
 export interface Deps {
   run: Runner;
@@ -78,6 +79,7 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   terminalRoutes(app, deps);
   desktopRoutes(app, deps);
   vncRoutes(app, deps, undefined, deps.vncTokenDir);
+  systemRoutes(app, deps);
 
   if (deps.novncRoot && existsSync(deps.novncRoot)) {
     await app.register(fastifyStatic, { root: deps.novncRoot, prefix: '/novnc/', decorateReply: false });
