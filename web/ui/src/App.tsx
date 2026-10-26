@@ -5,6 +5,10 @@ import { usePoll } from './usePoll';
 // Pages (one import per task):
 import { Overview } from './pages/Overview';
 import { Settings } from './pages/Settings';
+import { Sessions } from './pages/Sessions';
+import { Terminal } from './pages/Terminal';
+import { Desktops } from './pages/Desktops';
+import { DesktopView } from './pages/DesktopView';
 
 const NAV = [['/', 'Overview'], ['/sessions', 'Sessions'], ['/desktops', 'Desktops'], ['/settings', 'Settings'], ['/system', 'System']];
 
@@ -12,6 +16,8 @@ function page(path: string, me: Me | null) {
   const [, section, arg] = path.split('/');
   switch (section) {
     case 'settings': return <Settings me={me} />;
+    case 'sessions': return arg ? <Terminal id={decodeURIComponent(arg)} /> : <Sessions />;
+    case 'desktops': return arg ? <DesktopView n={Number(arg)} /> : <Desktops />;
     default: return <Overview />;
   }
 }
