@@ -111,9 +111,9 @@ check_idle_desktop_with_viewer_survives_reap() {
         sleep 0.5
       done
       ss -Htn state established "( sport = :5904 )" | grep -q . || { kill "$pid" 2>/dev/null; exit 1; }
-      sudo touch -d "@$(( $(date +%s) - 600 ))" /run/agentos/desktops/4.last &&
-      sudo /usr/local/lib/agentos/reap-desktops
       r=0
+      sudo touch -d "@$(( $(date +%s) - 600 ))" /run/agentos/desktops/4.last &&
+      sudo /usr/local/lib/agentos/reap-desktops &&
       systemctl is-active --quiet agentos-desktop@4.service || r=1
       kill "$pid" 2>/dev/null
       exit "$r"' || rc=1
