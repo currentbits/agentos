@@ -21,11 +21,12 @@ shopt -s nullglob
 for f in "$DESKTOPS_DIR"/*.last; do
   n=$(basename "$f" .last)
   [[ $n =~ ^([1-9]|1[0-6])$ ]] || continue
-  mtime=$(stat -c %Y "$f")
+  mtime=$(stat -c %Y "$f") || continue
   (( mtime < boot_ts )) && continue   # stale from before this boot: never touch
   (( mtime <= cutoff )) || continue   # still within the idle window
   systemctl is-active --quiet "agentos-desktop@$n.service" || continue
   port=$((5900 + n))
-  ss -Htn state established "( sport = :$port )" | grep -q . && continue   # a viewer is attached
-  systemctl stop "agentos-desktop@$n.service"
+  v=$(ss -Htn state established "( sport = :$port )") || continue
+  [ -n "$v" ] && continue   # a viewer is attached
+  systemctl stop "agentos-desktop@$n.service" || true
 done

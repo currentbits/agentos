@@ -69,26 +69,55 @@ check_desktop_conf_follows_config() {
 # drive the reaper directly rather than waiting 5 real minutes; desktop 4 is unused by any other
 # check in this suite.
 check_idle_desktop_reaped() {
+  local rc=0
   vm 'sudo agentos-config set AGENTOS_DESKTOP_IDLE_MINUTES 1 && sudo agentos-config apply &&
       systemctl --no-ask-password start agentos-desktop@4.service' && wait_x 4 &&
   vm 'test -f /run/agentos/desktops/4.last &&
       sudo touch -d "@$(( $(date +%s) - 120 ))" /run/agentos/desktops/4.last &&
       sudo /usr/local/lib/agentos/reap-desktops &&
-      ! systemctl is-active --quiet agentos-desktop@4.service' &&
-  vm 'sudo agentos-config set AGENTOS_DESKTOP_IDLE_MINUTES 120 && sudo agentos-config apply'
+      ! systemctl is-active --quiet agentos-desktop@4.service' || rc=1
+  vm 'sudo agentos-config set AGENTOS_DESKTOP_IDLE_MINUTES 120 && sudo agentos-config apply' || true
+  return "$rc"
 }
 check_fresh_desktop_survives_reap() {
+  local rc=0
   vm 'sudo agentos-config set AGENTOS_DESKTOP_IDLE_MINUTES 1 && sudo agentos-config apply &&
       systemctl --no-ask-password start agentos-desktop@4.service' && wait_x 4 &&
-  vm 'sudo /usr/local/lib/agentos/reap-desktops && systemctl is-active --quiet agentos-desktop@4.service' &&
+  vm 'sudo /usr/local/lib/agentos/reap-desktops && systemctl is-active --quiet agentos-desktop@4.service' || rc=1
   vm 'systemctl --no-ask-password stop agentos-desktop@4.service &&
-      sudo agentos-config set AGENTOS_DESKTOP_IDLE_MINUTES 120 && sudo agentos-config apply'
+      sudo agentos-config set AGENTOS_DESKTOP_IDLE_MINUTES 120 && sudo agentos-config apply' || true
+  return "$rc"
 }
 check_idle_minutes_zero_disables_reap() {
+  local rc=0
   vm 'sudo agentos-config set AGENTOS_DESKTOP_IDLE_MINUTES 0 && sudo agentos-config apply &&
       systemctl --no-ask-password start agentos-desktop@4.service' && wait_x 4 &&
   vm 'sudo touch -d "@$(( $(date +%s) - 36000 ))" /run/agentos/desktops/4.last &&
-      sudo /usr/local/lib/agentos/reap-desktops && systemctl is-active --quiet agentos-desktop@4.service' &&
+      sudo /usr/local/lib/agentos/reap-desktops && systemctl is-active --quiet agentos-desktop@4.service' || rc=1
   vm 'systemctl --no-ask-password stop agentos-desktop@4.service &&
-      sudo agentos-config set AGENTOS_DESKTOP_IDLE_MINUTES 120 && sudo agentos-config apply'
+      sudo agentos-config set AGENTOS_DESKTOP_IDLE_MINUTES 120 && sudo agentos-config apply' || true
+  return "$rc"
+}
+check_idle_desktop_with_viewer_survives_reap() {
+  # A viewer (an established TCP connection to the VNC port) must block the reaper even past
+  # the idle cutoff. Holds a raw loopback socket open rather than a real VNC client.
+  local rc=0
+  vm 'sudo agentos-config set AGENTOS_DESKTOP_IDLE_MINUTES 1 && sudo agentos-config apply &&
+      systemctl --no-ask-password start agentos-desktop@4.service' && wait_x 4 &&
+  vm 'python3 -c "import socket,time; s=socket.create_connection((\"127.0.0.1\",5904)); time.sleep(60)" &
+      pid=$!
+      for _ in $(seq 1 20); do
+        ss -Htn state established "( sport = :5904 )" | grep -q . && break
+        sleep 0.5
+      done
+      ss -Htn state established "( sport = :5904 )" | grep -q . || { kill "$pid" 2>/dev/null; exit 1; }
+      sudo touch -d "@$(( $(date +%s) - 600 ))" /run/agentos/desktops/4.last &&
+      sudo /usr/local/lib/agentos/reap-desktops
+      r=0
+      systemctl is-active --quiet agentos-desktop@4.service || r=1
+      kill "$pid" 2>/dev/null
+      exit "$r"' || rc=1
+  vm 'systemctl --no-ask-password stop agentos-desktop@4.service' || true
+  vm 'sudo agentos-config set AGENTOS_DESKTOP_IDLE_MINUTES 120 && sudo agentos-config apply' || true
+  return "$rc"
 }

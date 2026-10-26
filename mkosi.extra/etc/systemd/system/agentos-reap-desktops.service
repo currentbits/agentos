@@ -4,3 +4,8 @@ Description=Stop idle AgentOS desktops
 [Service]
 Type=oneshot
 ExecStart=/usr/local/lib/agentos/reap-desktops
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+# never add PrivateNetwork=: ss would see no viewers and every desktop would be reaped
