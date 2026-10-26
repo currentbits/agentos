@@ -10,6 +10,8 @@ import { execRunner, HttpError, type Runner } from './run.js';
 import { settingsRoutes } from './settings.js';
 import { sessionRoutes } from './sessions.js';
 import { terminalRoutes } from './terminal.js';
+import { desktopRoutes } from './desktops.js';
+import { vncRoutes } from './vnc.js';
 
 export interface Deps {
   run: Runner;
@@ -72,6 +74,8 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   settingsRoutes(app, deps);
   sessionRoutes(app, deps);
   terminalRoutes(app, deps);
+  desktopRoutes(app, deps);
+  vncRoutes(app, deps);
 
   if (deps.novncRoot && existsSync(deps.novncRoot)) {
     await app.register(fastifyStatic, { root: deps.novncRoot, prefix: '/novnc/', decorateReply: false });
