@@ -16,4 +16,12 @@ table inet agentos {
     udp dport 41641 accept                # Tailscale direct connections
     tcp dport @public_tcp accept          # AGENTOS_LAN_SSH etc.
   }
+
+  # The web UI (127.0.0.1:7070) trusts its identity header, so only tailscaled (root, for
+  # `tailscale serve`) and agent may connect to it. Scoped to that one port: every other
+  # loopback path (MCP, websockify, Docker) is untouched.
+  chain output {
+    type filter hook output priority filter; policy accept;
+    oif "lo" tcp dport 7070 meta skuid != { 0, 1000 } reject with tcp reset
+  }
 }

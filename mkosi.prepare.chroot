@@ -55,9 +55,15 @@ W=/usr/local/lib/agentos/web
 wb=$(mktemp -d)
 tar -C "$SRCDIR/web" --exclude=node_modules --exclude=dist -cf - . | tar -C "$wb" -xf -
 # shellcheck disable=SC2016 # $HOME expands in the inner shell, which runs with HOME=$wb
+# One command per line: set -e ignores a failure anywhere in an && chain except its last command.
 HOME=$wb bash -euo pipefail -c '
-  cd "$HOME/ui" && npm ci --no-audit --no-fund && npm run build
-  cd "$HOME/server" && npm ci --no-audit --no-fund && npm run build && npm prune --omit=dev --no-audit --no-fund
+  cd "$HOME/ui"
+  npm ci --no-audit --no-fund
+  npm run build
+  cd "$HOME/server"
+  npm ci --no-audit --no-fund
+  npm run build
+  npm prune --omit=dev --no-audit --no-fund
   # node-pty also ships Windows/macOS prebuilds and its C++ sources; Linux loads build/Release only.
   rm -rf node_modules/node-pty/prebuilds node_modules/node-pty/third_party node_modules/node-pty/deps node_modules/node-pty/src'
 rm -rf "$W"

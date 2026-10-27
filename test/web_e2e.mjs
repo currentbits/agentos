@@ -26,10 +26,20 @@ await page.locator('.xterm').click();
 await page.keyboard.type('echo e2e-$((6*7))');
 await page.keyboard.press('Enter');
 await page.locator('.xterm-rows', { hasText: 'e2e-42' }).waitFor({ timeout: 15000 }).catch(() => fail('typed command output not seen'));
-if (errors.length) fail(`page errors: ${errors.join('; ')}`);
+const mut = { headers: { 'X-AgentOS': '1', Origin: BASE } };
 for (const [method, path] of [['post', `/api/sessions/ag-${NAME}/stop`], ['delete', `/api/sessions/ag-${NAME}`]]) {
-  const r = await page.request[method](BASE + path, { headers: { 'X-AgentOS': '1', Origin: BASE } });
+  const r = await page.request[method](BASE + path, mut);
   if (!r.ok()) fail(`cleanup ${method} ${path}: ${r.status()}`);
 }
+// Desktop view: noVNC's rfb.js (and the vendor/ modules it imports) load from /novnc/, and the
+// same-origin VNC proxy connects.
+const created = await page.request.post(BASE + '/api/desktops', mut);
+if (!created.ok()) fail(`create desktop: ${created.status()}`);
+const { id } = await created.json();
+await page.goto(`${BASE}/desktops/${id}`);
+await page.getByText('connected', { exact: true }).waitFor({ timeout: 30000 })
+  .catch(async () => fail(`desktop ${id} view never connected: ${await page.locator('.toolbar').textContent()}`));
+if (!(await page.request.delete(`${BASE}/api/desktops/${id}`, mut)).ok()) fail(`destroy desktop ${id}`);
+if (errors.length) fail(`page errors: ${errors.join('; ')}`);
 await browser.close();
 console.log('E2E OK');

@@ -94,6 +94,7 @@ else
 fi
 # Say why on the console too: agetty prints /run/issue.d/*.issue after /etc/issue.
 if [[ $ws == failed* ]]; then
+  echo "warning: web UI: tailscale serve $ws" >&2   # to the journal (docs/tailscale-acl.md)
   install -d /run/issue.d
   printf 'Web UI: tailscale serve %s\n\n' "$ws" > /run/issue.d/50-agentos-web.issue
 else

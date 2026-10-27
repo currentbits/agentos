@@ -60,6 +60,21 @@ check_web_identity_codes() {
     test "$(code -H "Tailscale-User-Login: Smoke@Example.COM" $U/api/sessions)" = 200 &&
     test "$(code -H "Tailscale-User-Login: smoke@example.com" -H "Host: evil.example:7070" $U/api/sessions)" = 403'
 }
+check_web_loopback_uids() {
+  # Only root (tailscaled) and agent may connect to 7070: nobody gets a TCP reset (curl exit 7),
+  # while agent and root still reach the app (401 without identity).
+  web_users && vm "$WEB"'
+    sudo nft list chain inet agentos output | grep -q "tcp dport 7070" &&
+    { sudo runuser -u nobody -- curl -s -o /dev/null -m 3 $U/; test $? = 7; } &&
+    test "$(code $U/api/sessions)" = 401 &&
+    test "$(sudo curl -s -o /dev/null -m 3 -w "%{http_code}" $U/api/sessions)" = 401'
+}
+check_web_novnc_files_only() {
+  # /novnc/ serves core/ (and vendor/) for DesktopView, never noVNC'\''s own vnc.html app.
+  web_users && vm "$WEB"'
+    test "$(code -H "Tailscale-User-Login: smoke@example.com" $U/novnc/core/rfb.js)" = 200 &&
+    ! w $U/novnc/vnc.html | grep -qi novnc'
+}
 check_web_csrf() {
   web_users && vm "$WEB"'
     L="Tailscale-User-Login: smoke@example.com"
