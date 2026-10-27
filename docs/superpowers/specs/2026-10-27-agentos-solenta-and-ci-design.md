@@ -6,28 +6,60 @@ Builds on: the AgentOS base, desktops, installer and web UI specs (all merged on
 
 ## Goals
 
-1. **Solenta worker host.** An AgentOS machine works as a remote host for Solenta.app 0.22, unmodified. Solenta's existing `remoteHost`/`remotePath` project setting runs every agent CLI on the box over SSH. On the box, the CLIs, API keys and Solenta's own MCP servers (`coder-threads`, `coder-memory`) all work.
+1. **Solenta on AgentOS.** Solenta.app 0.26 (Nightly), unmodified, works with an AgentOS box in two modes:
+   - **Mode A, Solenta on the box (recommended).** Solenta 0.26's *Remote Connections* installs Solenta's Linux build on the box over SSH, runs it headless, and drives it from the Mac through an SSH tunnel. Agents, CLIs and Solenta's MCP servers (`coder-threads`, `coder-memory`) all run on the box, with no bridge needed.
+   - **Mode B, worker host.** Solenta runs on the Mac. A project's `remoteHost`/`remotePath` runs each agent CLI on the box over SSH, and a Mac-side bridge makes Solenta's MCP servers reachable from the box.
 2. **Built-in CI.** You can run CI for any repo on the box without GitHub: push to the box, or trigger from the web UI, the CLI or an agent. Agents get MCP tools and a skill that make "run CI, read the failure, fix, re-run" part of how they work.
 
 ## Non-goals
 
-- Running Solenta itself on Linux: there's no Linux build, and the Electron main process requires a window.
 - Changing Solenta.
+- Mode B's bridge is unnecessary in Mode A, so docs and the card present Mode A first.
 - A full forge (PRs, issues). Forgejo may come later as a separate add-on.
 
-## Facts about Solenta 0.22 this design relies on
+## Facts about Solenta 0.26 this design relies on
 
-Investigated from the app bundle (`/Applications/Solenta.app/Contents/Resources/app`):
+Investigated from the running app bundle (`/Applications/Solenta Nightly.app/Contents/Resources/app`, 0.26.0). Both the stable and Nightly channels share the userData dir `~/Library/Application Support/Solenta`.
+
+**Remote Connections** (`electron/remoteConnections.js`, used by Mode A):
+- Every remote script runs as `ssh -T -o BatchMode=yes -o StrictHostKeyChecking=yes … host "sh -c '…'"`: POSIX `sh`, non-interactive, non-login. It never uses sudo.
+- **The box's host key must already be in the Mac's `known_hosts`.** Password logins are rejected, so key or agent auth is required.
+- Install and upgrade:
+  - the `linux-x64` GitHub release asset, verified with `sha256sum` against the release digest;
+  - unpacked to `$HOME/solenta/solenta` (or `solenta-nightly`), keeping the previous one in `$HOME/solenta.old`;
+  - also discovered at `~/.local/share/solenta/solenta`, `/opt/solenta/solenta`, or on PATH;
+  - after install, `ldd` reports missing libraries and the app shows a `sudo apt install …` hint for a human to run.
+- Start: if `curl 127.0.0.1:<port>/` doesn't answer and no process runs, it starts `nohup "$bin" --headless --serve-web=<port> --no-sandbox` (default port 4620), logging to `~/.solenta-headless.log`. No display is needed. There is no systemd unit and no linger, so the process may die when the SSH session ends.
+- Auth: the Mac reads `${XDG_CONFIG_HOME:-$HOME/.config}/Solenta/web-token` over SSH, then opens `ssh -N -L 127.0.0.1:<local>:127.0.0.1:<port>` and authenticates the web UI with that token.
+- On the box, the headless Solenta runs its own `coder-threads`/`coder-memory` on the box's loopback. The CLIs it spawns get local `127.0.0.1` URLs.
+
+**Per-project remote host** (`electron/ssh.js`, used by Mode B):
 - A project with `remoteHost` (`user@host`) and `remotePath` makes Solenta run each CLI as `ssh -o BatchMode=yes -o ConnectTimeout=10 user@host 'cd <remotePath> && env K=V <cli> …'` (`electron/ssh.js`).
-- Per-run homes live under `$HOME/.solenta/<kind>/<threadId>` on the remote (`electron/remote-overlay.js`).
+- Per-run homes live under `$HOME/.solenta/<kind>/<threadId>` on the remote (`electron/remote-overlay.js`). The kinds are `codex-homes`, `opencode-guardrails`, `cursor-guardrails`, `kimi-homes`, `grok-homes` and `muse-homes`.
 - The remote needs:
   - key-based (non-interactive) SSH;
   - the CLIs on the PATH of a **non-login** shell;
-  - `git`, `bash` and `node`, which Solenta's preflight checks;
+  - `git`, `bash` and `node` (Solenta's own `doctor.js` preflight only runs for Windows/WSL now, so AgentOS provides its own preflight);
   - an existing git checkout at `remotePath`.
-- `coder-threads` and `coder-memory` are HTTP MCP servers inside Solenta's Electron process. They bind `127.0.0.1` on a random port with a bearer token, and their config lives in `<userData>/orch-server.json` and `<userData>/memory-server.json`. CLIs get `http://127.0.0.1:<port>/mcp` URLs, so a remote box can't reach them unless something forwards that port.
+- `coder-threads` and `coder-memory` are HTTP MCP servers inside Solenta's Electron process. They bind `127.0.0.1` (hard-coded) on a random port with a bearer token. Their config lives in `<userData>/orch-server.json` (`port`, `token`) and `<userData>/memory-server.json` (`port`, `token`, `dbPath`). CLIs get `http://127.0.0.1:<port>/mcp` URLs, so a remote box can't reach them unless something forwards that port.
 
-## Part 1: Solenta worker host
+## Part 1: Solenta
+
+### 1M. Mode A, Solenta headless on the box (Remote Connections)
+
+What the box provides, so Remote Connections works without any manual step:
+- **Runtime libraries in the image**, so the post-install `ldd` check passes: `libnss3 libnspr4 libgtk-3-0 libgbm1 libasound2 libatk1.0-0 libatk-bridge2.0-0 libatspi2.0-0 libcups2 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxrandr2 libxfixes3 libpango-1.0-0 libcairo2 libdbus-1-3 libexpat1 libxext6 libx11-6 libxcb1 libglib2.0-0`. Most are already present for XFCE and Chromium; the plan adds the rest and checks the size budget. Trixie may use `t64` package names; the plan verifies them.
+- **Survival after the SSH session ends:** `agentos-solenta.service`, a system unit running as `agent`, owns the headless process once Solenta has installed it.
+  - **Condition:** `ConditionPathExists=` on either install path (`/home/agent/solenta/solenta` or `/home/agent/solenta/solenta-nightly`).
+  - **Start command:** `<bin> --headless --serve-web=4620 --no-sandbox`, with `Environment=PATH=/usr/local/bin:/usr/bin:/bin` so the 1A wrappers resolve the CLIs.
+  - **Restart and lifecycle:** `Restart=on-failure` and `KillMode=process`, so agents' tmux sessions survive.
+  - **Coexisting with Solenta's own start:** a `.path` unit starts the service as soon as Solenta installs the binary. Solenta's own `nohup` start finds the server already up (its `curl` check) and doesn't start a second one. After an upgrade, Solenta kills the old process with `pkill`; the unit's `Restart=` brings up the new binary.
+  - **Enabled by** `AGENTOS_SOLENTA` (default `1`, set with `agentos-config`).
+- **Host key:** the pairing card (1B) shows the box's SSH host key fingerprints and a ready-to-paste `ssh-keyscan` line for the Mac, with an instruction to compare the fingerprint first.
+- **Network:** port 4620 stays on loopback. Solenta reaches it through its own `ssh -L`, so no firewall change is needed.
+- **Check:** the card shows `agentos-solenta` status, the installed version (from the tarball's `package.json` or the binary's `--version`), and whether `~/.config/Solenta/web-token` exists. It never shows the token.
+
+### Mode B, worker host
 
 ### 1A. CLIs and API keys over non-login SSH (box)
 
@@ -47,7 +79,7 @@ Investigated from the app bundle (`/Applications/Solenta.app/Contents/Resources/
   4. **Preflight.** Run, as agent, `bash -c 'command -v git bash node claude codex opencode grok'` in a non-login, non-interactive environment equivalent to what Solenta's SSH command gets (`env -i HOME=/home/agent PATH=/usr/local/bin:/usr/bin:/bin bash -c …`). Also check the checkout (`git -C <path> rev-parse`) and that `~/.solenta` is writable. Show a pass or fail per item.
 - No new state: pairing only writes `authorized_keys` and the checkout.
 
-### 1C. Solenta's MCP servers on the box (Mac-side bridge)
+### 1C. Solenta's MCP servers on the box (Mac-side bridge, Mode B only)
 
 - **`tools/solenta-bridge`:** a bash script that runs on the Mac. It ships in the AgentOS repo and can be downloaded from the web UI Solenta card. It:
   1. reads the ports from `~/Library/Application Support/Solenta/{orch-server.json,memory-server.json}`, port fields only, never the tokens;
