@@ -9,6 +9,7 @@ enable docker.service
 enable containerd.service
 enable tailscaled.service
 enable agentos-reap-desktops.timer
+enable agentos-solenta.path
 enable apt-daily.timer
 enable apt-daily-upgrade.timer
 enable unattended-upgrades.service

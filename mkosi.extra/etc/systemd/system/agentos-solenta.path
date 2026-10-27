@@ -1,0 +1,13 @@
+[Unit]
+Description=Start agentos-solenta when Solenta Remote Connections installs or upgrades Solenta
+
+[Path]
+# PathChanged (edge), not PathExists (level): a level trigger re-starts the service every time it
+# stops while the file exists, and the ExecCondition skip would loop until the start limit.
+# Verified on systemd 257: renaming a new ~/solenta into place fires these.
+PathChanged=/home/agent/solenta/solenta
+PathChanged=/home/agent/solenta/solenta-nightly
+Unit=agentos-solenta.service
+
+[Install]
+WantedBy=paths.target

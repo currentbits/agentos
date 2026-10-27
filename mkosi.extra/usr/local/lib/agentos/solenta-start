@@ -1,0 +1,10 @@
+#!/bin/bash
+# ExecStart of agentos-solenta.service: exec the Solenta build that Solenta's Remote Connections
+# installed in ~agent/solenta, with fixed arguments. Runs nothing else, takes no input.
+set -euo pipefail
+for bin in /home/agent/solenta/solenta /home/agent/solenta/solenta-nightly; do
+  # Same argv as Solenta's own `nohup` start, so its pkill/pgrep patterns find this process too.
+  if [ -f "$bin" ] && [ -x "$bin" ]; then exec "$bin" --headless --serve-web=4620 --no-sandbox; fi
+done
+echo "agentos-solenta: no Solenta in /home/agent/solenta" >&2
+exit 1

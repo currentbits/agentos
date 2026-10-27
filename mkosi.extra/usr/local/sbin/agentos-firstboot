@@ -101,6 +101,15 @@ else
   rm -f /run/issue.d/50-agentos-web.issue
 fi
 
+# 5c. Solenta Mode A (AGENTOS_SOLENTA, default on): the .path unit starts agentos-solenta when
+# Solenta's Remote Connections installs it; the service's condition keeps it inactive until then.
+if [ "$(env_get "$AGENTOS_ENV" AGENTOS_SOLENTA | grep -x 0 || echo 1)" = 1 ]; then
+  systemctl enable --quiet agentos-solenta.path agentos-solenta.service
+  systemctl start --no-block agentos-solenta.path agentos-solenta.service
+else
+  systemctl disable --quiet --now --no-block agentos-solenta.path agentos-solenta.service
+fi
+
 # 6. Console lockout prevention last, so it sees Tailscale. It restarts getty@tty1, which is
 # safe because this runs as its own unit (agentos-config apply restarts the unit).
 /usr/local/sbin/agentos-console-apply

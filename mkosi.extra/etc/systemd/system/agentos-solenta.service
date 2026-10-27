@@ -1,0 +1,29 @@
+[Unit]
+Description=Solenta headless on 127.0.0.1:4620 (installed over SSH by Solenta Remote Connections)
+After=network.target agentos-firstboot.service
+ConditionPathExists=|/home/agent/solenta/solenta
+ConditionPathExists=|/home/agent/solenta/solenta-nightly
+
+[Service]
+User=agent
+WorkingDirectory=/home/agent
+Environment=PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8
+# A copy Solenta started itself (its `nohup`, during a restart gap) may already serve 4620: leave it
+# be. A skipped condition does not trigger Restart=. ponytail: if that copy dies later, the next
+# boot or the next Solenta upgrade brings the unit back.
+ExecCondition=/bin/sh -c '! /usr/bin/curl -s -o /dev/null -m 2 http://127.0.0.1:4620/'
+ExecStart=/usr/local/lib/agentos/solenta-start
+SyslogIdentifier=agentos-solenta
+# always, not on-failure: Solenta's upgrade stops the old build with pkill (SIGTERM, a "clean" exit
+# for on-failure). 5 s lets it swap ~/solenta first (it waits up to 15 s for the old process to go).
+Restart=always
+RestartSec=5
+# Agent sessions (tmux) Solenta starts live in this cgroup: a restart must not kill them.
+KillMode=process
+# Light hardening, like agentos-web: the agents it runs use sudo and work in /home/agent.
+NoNewPrivileges=no
+ProtectHome=no
+PrivateTmp=no
+
+[Install]
+WantedBy=multi-user.target
