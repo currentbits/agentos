@@ -1,13 +1,20 @@
 [Unit]
 Description=Solenta headless on 127.0.0.1:4620 (installed over SSH by Solenta Remote Connections)
-After=network.target agentos-firstboot.service
+After=network.target agentos-firstboot.service agentos-solenta-xvfb.service
+Requires=agentos-solenta-xvfb.service
 ConditionPathExists=|/home/agent/solenta/solenta
 ConditionPathExists=|/home/agent/solenta/solenta-nightly
+# A broken Solenta build (e.g. a bad upgrade) would otherwise crash-loop forever at RestartSec=5.
+StartLimitIntervalSec=300
+StartLimitBurst=10
 
 [Service]
 User=agent
 WorkingDirectory=/home/agent
-Environment=PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8
+Environment=PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 DISPLAY=:99
+# Electron 35 SIGSEGVs creating its BrowserWindow if it connects before Xvfb is accepting (verified
+# with gdb); wait up to 5s for the socket Xvfb creates rather than race it.
+ExecStartPre=/bin/sh -c 'for _ in $(seq 1 50); do [ -e /tmp/.X11-unix/X99 ] && exit 0; sleep 0.1; done; exit 1'
 # A copy Solenta started itself (its `nohup`, during a restart gap) may already serve 4620: leave it
 # be. A skipped condition does not trigger Restart=. ponytail: if that copy dies later, the next
 # boot or the next Solenta upgrade brings the unit back.
@@ -20,7 +27,8 @@ Restart=always
 RestartSec=5
 # Agent sessions (tmux) Solenta starts live in this cgroup: a restart must not kill them.
 KillMode=process
-# Light hardening, like agentos-web: the agents it runs use sudo and work in /home/agent.
+# Deliberately no hardening: the agents it runs use sudo (NoNewPrivileges=no), work in /home/agent
+# (ProtectHome=no), and Xvfb's socket lives in /tmp/.X11-unix (PrivateTmp=no would hide it).
 NoNewPrivileges=no
 ProtectHome=no
 PrivateTmp=no

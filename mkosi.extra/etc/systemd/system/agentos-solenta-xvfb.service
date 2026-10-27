@@ -1,0 +1,9 @@
+[Unit]
+Description=Xvfb :99 for agentos-solenta (Electron 35 crashes creating a window with no X display)
+PartOf=agentos-solenta.service
+
+[Service]
+User=agent
+# :99 is outside the desktop range 1-16 (agentos-desktop@N), so it can't collide with a real seat.
+ExecStart=/usr/bin/Xvfb :99 -screen 0 1280x800x24 -nolisten tcp
+Restart=on-failure
