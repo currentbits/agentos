@@ -69,6 +69,20 @@ describe('HTTP auth through the app', () => {
   });
 });
 
+describe('JSON body parsing', () => {
+  it('tolerates Content-Type: application/json with no body (some clients send it on bodyless actions)', async () => {
+    const app = await buildApp(fakeDeps().deps);
+    const r = await app.inject({ method: 'POST', url: '/api/nope', headers: { ...HM, 'content-type': 'application/json' } });
+    expect(r.statusCode).toBe(404);   // reached routing, rather than a 400 from the body parser
+  });
+
+  it('still rejects malformed JSON with 400', async () => {
+    const app = await buildApp(fakeDeps().deps);
+    const r = await app.inject({ method: 'POST', url: '/api/nope', headers: { ...HM, 'content-type': 'application/json' }, payload: '{not json' });
+    expect(r.statusCode).toBe(400);
+  });
+});
+
 describe('WebSocket upgrades', () => {
   it('reject a missing identity, an unlisted login and a missing or bad Origin', async () => {
     const app = await buildApp(fakeDeps().deps);

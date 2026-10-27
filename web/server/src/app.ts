@@ -55,6 +55,18 @@ export function defaultDeps(): Deps {
 
 export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   const app = Fastify({ logger: { level: 'warn' }, bodyLimit: 1024 * 1024 });
+  // A bodyless mutating action (stop, create-with-no-fields) still gets `Content-Type:
+  // application/json` from some clients (the smoke checks' CSRF-header helper, among others).
+  // Fastify's default parser treats that as an error; treat an empty body as {} instead.
+  app.addContentTypeParser('application/json', { parseAs: 'string' }, (_req, body, done) => {
+    if (body === '') return done(null, {});
+    try {
+      done(null, JSON.parse(body as string));
+    } catch (err) {
+      (err as Error & { statusCode?: number }).statusCode = 400;
+      done(err as Error, undefined);
+    }
+  });
   app.decorateRequest('login', '');
   // Anti-clickjacking headers on every response, including 401/403 and static files.
   app.addHook('onSend', async (_req, reply, payload) => {

@@ -30,7 +30,7 @@ jobs:
       - name: Host setup
         run: |
           sudo apt-get update
-          sudo apt-get install -y qemu-system-x86 qemu-utils ovmf cloud-image-utils mtools pipx shellcheck zstd
+          sudo apt-get install -y qemu-system-x86 qemu-utils ovmf cloud-image-utils mtools pipx shellcheck zstd tmux
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           sudo chmod 666 /dev/kvm
           pipx install "git+https://github.com/systemd/mkosi@v27"
@@ -41,11 +41,22 @@ jobs:
           shellcheck -S warning test/smoke.sh test/checks/*.sh test/env_test.sh tools/*.sh mkosi.prepare.chroot mkosi.finalize.chroot \
             mkosi.extra/usr/local/bin/* mkosi.extra/usr/local/sbin/* mkosi.extra/usr/local/lib/agentos/*.sh \
             mkosi.extra/etc/profile.d/agentos.sh \
+            mkosi.extra/usr/local/lib/agentos/web-serve test/web_serve_test.sh \
             tools/build-installer.sh test/installer-boot-test.sh test/install-test.sh installer/mkosi.extra/usr/local/sbin/* \
             installer/mkosi.extra/usr/lib/agentos-installer/lib.sh
           test/env_test.sh
           test/installer_test.sh
           python3 test/computer_test.py
+          test/web_serve_test.sh
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Web UI unit tests
+        run: |
+          (cd web/server && npm ci && npm run typecheck && npx vitest run)
+          (cd web/ui && npm ci && npx vitest run && npm run build)
 
       - name: Build image
         run: mkosi -f build
