@@ -212,6 +212,10 @@ Install is idempotent and never overwrites a user-edited file. Each managed bloc
   - secrets are exposed only when listed.
 - **Unit (bash):** wrapper resolution (no self-loop, missing binary → 127), and the `solenta-bridge` port parsing from sample JSON (tokens never read or printed).
 - **In-VM smoke checks (`test/checks/97-solenta.sh`, `98-ci.sh`):**
+  - Mode A: every Electron runtime library listed in 1M is installed.
+  - Mode A: `agentos-solenta.service` and its `.path` unit are enabled. With no Solenta install, the condition keeps the service inactive.
+  - Mode A: with a stub `~/solenta/solenta`, a shell script that serves `--serve-web` via `python3 -m http.server`, the unit starts it, keeps it running across an SSH logout, and restarts it after `pkill`.
+  - Mode A, optionally: the real linux-x64 Solenta tarball installed by the same steps `remoteConnections.js` uses answers on 4620. This needs network; skip it with a clear SKIP when offline.
   - over a non-login, non-interactive command (`ssh agent@vm 'claude --version'`, or `env -i … bash -c`), every CLI resolves and an API key from `secrets.env` is visible;
   - the Solenta preflight passes;
   - a reverse forward (`ssh -R`) from the host binds only on the VM's loopback and is reachable there;
@@ -221,7 +225,7 @@ Install is idempotent and never overwrites a user-edited file. Each managed bloc
   - the MCP `ci_run` + `ci_wait` end-to-end;
   - the skill file is present for each CLI after boot;
   - the web CI API lists and streams the run.
-- **Manual:** pair with a real Solenta.app on the Mac; run a thread on the box; confirm that `coder-threads` and `coder-memory` work through the bridge.
+- **Manual:** connect a real Solenta.app 0.26 to the box through Remote Connections (Mode A), and run a thread on the box. For Mode B, pair with a real Solenta.app on the Mac; run a thread on the box; confirm that `coder-threads` and `coder-memory` work through the bridge.
 
 ## Out of scope (this round)
 
