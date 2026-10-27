@@ -1,0 +1,30 @@
+#!/bin/bash
+# AgentOS: /usr/local/bin/{claude,codex,opencode,grok} are symlinks to this file, so the CLIs
+# resolve and see their API keys in a non-login, non-interactive shell too (ssh host 'claude …',
+# as Solenta runs them), where /etc/profile.d never runs. For user agent it loads the keys and
+# execs the real CLI from the agent's tool directories, then PATH; anyone else gets their own
+# PATH. Any candidate that resolves back to this file is skipped, so it can never exec itself.
+# AGENTOS_WHICH=1 prints the binary it would run instead (the Solenta preflight uses it).
+set -euo pipefail
+cli=${0##*/}
+self=$(readlink -f "$0")
+user=$(id -un)
+dirs=()
+if [ "$user" = "${AGENTOS_AGENT_USER:-agent}" ]; then
+  : "${HOME:=/home/agent}"
+  export HOME
+  # shellcheck source=load-secrets.sh
+  . "${AGENTOS_LIB:-/usr/local/lib/agentos}/load-secrets.sh"
+  read -ra dirs <<< "$AGENTOS_USER_DIRS"
+fi
+IFS=: read -ra path_dirs <<< "${PATH:-/usr/bin:/bin}"
+for d in "${dirs[@]}" "${path_dirs[@]}"; do
+  c=${d:-.}/$cli
+  [ -n "$d" ] && [ -f "$c" ] && [ -x "$c" ] || continue
+  [ "$(readlink -f "$c")" = "$self" ] && continue
+  if [ -n "${AGENTOS_WHICH:-}" ]; then printf '%s\n' "$c"; exit 0; fi
+  # shellcheck disable=SC2093 # exec replaces this process; the loop only continues past skipped candidates
+  exec "$c" "$@"
+done
+echo "agentos: $cli is not installed for user $user" >&2
+exit 127

@@ -48,6 +48,9 @@ for f in "$A/.codex/auth.json" \
   if [ -e "$f" ]; then fail "CLI auth state baked into image: $f"; fi
 done
 if [ -e /etc/agentos/mcp-token ]; then fail "mcp-token baked into image (first-boot-only secret)"; fi
+for c in claude codex opencode grok; do
+  [ "$(readlink -f "/usr/local/bin/$c")" = /usr/local/lib/agentos/cli-wrapper ] || fail "/usr/local/bin/$c is not the CLI wrapper"
+done
 
 W=/usr/local/lib/agentos/web
 for f in "$W/server/dist/main.js" "$W/ui/index.html" "$W/server/node_modules/node-pty/build/Release/pty.node"; do
