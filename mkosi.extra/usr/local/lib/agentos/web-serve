@@ -1,0 +1,24 @@
+#!/bin/bash
+# web-serve 1|0: publish the web UI on the tailnet with `tailscale serve` (1), or withdraw it (0).
+# Prints one status line for web.conf's SERVE=: ok | off | tailscale-down | failed: <why>.
+# Always exits 0: a tailnet without HTTPS certificates must not fail agentos-firstboot.
+set -euo pipefail
+TS=${TAILSCALE:-tailscale}
+T=${WEB_SERVE_TIMEOUT:-30}
+
+if [ "${1:-1}" = 0 ]; then
+  timeout "$T" "$TS" serve --https=443 off >/dev/null 2>&1 || true
+  echo off
+  exit 0
+fi
+if ! timeout "$T" "$TS" status >/dev/null 2>&1; then
+  echo tailscale-down
+  exit 0
+fi
+# Without HTTPS enabled on the tailnet, `tailscale serve` prints an enable-link and waits: the
+# timeout turns that into a failure whose message carries the link.
+if out=$(timeout "$T" "$TS" serve --bg --https=443 http://127.0.0.1:7070 2>&1 </dev/null); then
+  echo ok
+else
+  echo "failed: $(printf '%s' "$out" | tr -s '\n\t' '  ' | cut -c1-200)"
+fi

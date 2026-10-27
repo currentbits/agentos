@@ -29,6 +29,10 @@ vhome=$(runuser -u agent -- mktemp -d)
   done
 } >> /var/lib/agentos-manifest.txt
 { echo "# agentos-computer python"; /usr/local/lib/agentos/venv/bin/pip freeze --disable-pip-version-check; } >> /var/lib/agentos-manifest.txt
+{ echo "# agentos-web npm"; node -e '
+    const d = "/usr/local/lib/agentos/web/server";
+    for (const n of Object.keys(require(d + "/package.json").dependencies))
+      console.log(n + "@" + require(d + "/node_modules/" + n + "/package.json").version);'; } >> /var/lib/agentos-manifest.txt
 rm -rf "$vhome"
 
 # Invariants last, after everything above that could have written state.
@@ -44,5 +48,11 @@ for f in "$A/.codex/auth.json" \
   if [ -e "$f" ]; then fail "CLI auth state baked into image: $f"; fi
 done
 if [ -e /etc/agentos/mcp-token ]; then fail "mcp-token baked into image (first-boot-only secret)"; fi
+
+W=/usr/local/lib/agentos/web
+for f in "$W/server/dist/main.js" "$W/ui/index.html" "$W/server/node_modules/node-pty/build/Release/pty.node"; do
+  if [ ! -f "$f" ]; then fail "web UI build output missing: $f"; fi
+done
+if [ -e "$W/server/node_modules/typescript" ] || [ -e "$W/server/node_modules/vitest" ]; then fail "web UI dev dependencies shipped"; fi
 
 echo "image invariants OK"

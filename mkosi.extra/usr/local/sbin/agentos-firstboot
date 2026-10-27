@@ -80,9 +80,25 @@ fi
 wu=$(env_get "$AGENTOS_ENV" AGENTOS_WEB_USERS)
 validate_setting AGENTOS_WEB_USERS "$wu" 2>/dev/null || wu=
 we=$(env_get "$AGENTOS_ENV" AGENTOS_WEB | grep -x 0 || echo 1)
-printf 'USERS=%s\nENABLED=%s\n' "$wu" "$we" > /etc/agentos/web.conf.tmp
+# Publish it on the tailnet (web-serve prints ok | off | tailscale-down | failed: <why>), then
+# start or stop the unit. --no-block: agentos-web is ordered after this unit, so waiting would deadlock.
+ws=$(/usr/local/lib/agentos/web-serve "$we")
+printf 'USERS=%s\nENABLED=%s\nSERVE=%s\n' "$wu" "$we" "$ws" > /etc/agentos/web.conf.tmp
 chmod 644 /etc/agentos/web.conf.tmp
 mv /etc/agentos/web.conf.tmp /etc/agentos/web.conf
+if [ "$we" = 1 ]; then
+  systemctl enable --quiet agentos-web.service
+  systemctl start --no-block agentos-web.service
+else
+  systemctl disable --quiet --now --no-block agentos-web.service
+fi
+# Say why on the console too: agetty prints /run/issue.d/*.issue after /etc/issue.
+if [[ $ws == failed* ]]; then
+  install -d /run/issue.d
+  printf 'Web UI: tailscale serve %s\n\n' "$ws" > /run/issue.d/50-agentos-web.issue
+else
+  rm -f /run/issue.d/50-agentos-web.issue
+fi
 
 # 6. Console lockout prevention last, so it sees Tailscale. It restarts getty@tty1, which is
 # safe because this runs as its own unit (agentos-config apply restarts the unit).

@@ -12,7 +12,7 @@ Add to your tailnet policy:
 {
   "tagOwners": { "tag:agentos": ["autogroup:admin"] },
   "acls": [
-    { "action": "accept", "src": ["autogroup:admin"], "dst": ["tag:agentos:22,6080,8765"] }
+    { "action": "accept", "src": ["autogroup:admin"], "dst": ["tag:agentos:22,443,6080,8765"] }
   ],
   "ssh": [
     { "action": "accept", "src": ["autogroup:admin"], "dst": ["tag:agentos"], "users": ["agent"] }
@@ -21,3 +21,5 @@ Add to your tailnet policy:
 ```
 
 No rule lets `tag:agentos` initiate connections to other tailnet devices, so a hijacked agent can't reach them. Internet egress is unaffected.
+
+Port 443 is the web UI (`tailscale serve`, see below). It needs HTTPS certificates enabled for the tailnet (admin console → DNS → HTTPS Certificates). If they're off, `agentos-firstboot` logs a warning, `/etc/agentos/web.conf` says `SERVE=failed: …`, and the login banner shows the reason. Allow users into the web UI with `sudo agentos-config set AGENTOS_WEB_USERS you@example.com && sudo agentos-config apply`. Requests from tagged devices carry no identity, so they are always refused.

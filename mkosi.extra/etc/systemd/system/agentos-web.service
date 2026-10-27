@@ -1,0 +1,24 @@
+[Unit]
+Description=AgentOS web UI (127.0.0.1:7070, published on the tailnet by tailscale serve)
+After=network.target agentos-firstboot.service
+
+[Service]
+User=agent
+WorkingDirectory=/home/agent
+Environment=LANG=C.UTF-8
+ExecStart=/usr/bin/node /usr/local/lib/agentos/web/server/dist/main.js
+SyslogIdentifier=agentos-web
+Restart=on-failure
+RestartSec=2
+# ponytail: sessions are tmux servers this service may have started, inside its cgroup; a restart
+# must not kill them. systemd warns that KillMode=process is unsafe; move tmux into its own scope
+# (systemd-run --user --scope with lingering) if leftover processes ever become a problem.
+KillMode=process
+# Deliberately light hardening: sudo needs NoNewPrivileges off, sessions live in /home/agent, and
+# the tmux socket is /tmp/tmux-1000.
+NoNewPrivileges=no
+ProtectHome=no
+PrivateTmp=no
+
+[Install]
+WantedBy=multi-user.target
