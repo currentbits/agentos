@@ -23,6 +23,7 @@ export function Desktops() {
     <section>
       <h1>Desktops <small>{data ? `${data.desktops.length} of ${data.max}` : ''}</small></h1>
       <div className="actions"><button onClick={newDesktop}>New desktop</button></div>
+      <p className="hint">Only an open desktop view counts as a viewer for the idle reaper: these thumbnails don't keep a desktop alive.</p>
       <ErrorText error={error} />
       <div className="grid">
         {data?.desktops.map((d) => (

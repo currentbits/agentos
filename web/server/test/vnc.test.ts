@@ -28,9 +28,10 @@ it('proxies to websockify with the token added server-side', async () => {
   const tokens = mkdtempSync(join(tmpdir(), 'vnc-'));
   writeFileSync(join(tokens, '1'), `${token}: localhost:5901\n`);
 
-  const { deps } = fakeDeps((argv) => (argv[1] === 'list-units' ? { stdout: 'agentos-desktop@1.service loaded active running x\n' } : {}));
+  const { deps, audits } = fakeDeps((argv) => (argv[1] === 'list-units' ? { stdout: 'agentos-desktop@1.service loaded active running x\n' } : {}));
   const app = Fastify();
   app.decorateRequest('login', '');
+  app.addHook('onRequest', async (req) => { req.login = 'alice@example.com'; });
   await app.register(fastifyWebsocket);
   vncRoutes(app, deps, `ws://127.0.0.1:${(upstream.address() as AddressInfo).port}/websockify`, tokens);
   await app.ready();
@@ -45,6 +46,7 @@ it('proxies to websockify with the token added server-side', async () => {
   const closed = await app.injectWS('/api/desktops/2/vnc');
   const code = await new Promise<number>((r) => closed.once('close', (c: number) => r(c)));
   expect(code).toBe(1011);
+  expect(audits).toEqual(['alice@example.com vnc-connect 1']);   // desktop 2 is not running: no audit
   upstream.close();
   await app.close();
 });

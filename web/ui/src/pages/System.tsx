@@ -10,6 +10,7 @@ import { usePoll } from '../usePoll';
 export function System({ me }: { me: Me | null }) {
   const [unit, setUnit] = useState<string | null>(null);
   const [updating, setUpdating] = useState(0);
+  const [updateOpen, setUpdateOpen] = useState(false);
   const updates = usePoll(() => api<{ lastUnattended: string | null }>('/api/system/updates'));
   return (
     <section>
@@ -25,8 +26,8 @@ export function System({ me }: { me: Me | null }) {
       <div className="panel">
         <h2>Updates</h2>
         <p>Last unattended-upgrades run: {updates.data?.lastUnattended ? new Date(updates.data.lastUnattended).toLocaleString() : 'never'}</p>
-        <button onClick={() => setUpdating((n) => n + 1)}>Run agentos-update</button>
-        {updating > 0 && <LogStream key={updating} path="/api/system/update" />}
+        <button disabled={updateOpen} onClick={() => { setUpdateOpen(true); setUpdating((n) => n + 1); }}>Run agentos-update</button>
+        {updating > 0 && <LogStream key={updating} path="/api/system/update" onEnd={() => setUpdateOpen(false)} />}
       </div>
       {me && <Power hostname={me.hostname} />}
     </section>

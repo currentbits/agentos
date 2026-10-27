@@ -1,5 +1,5 @@
 // System: health, services, journal tail and updates (streamed over WebSocket), power.
-import { spawn } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
 import { readFile, stat, statfs } from 'node:fs/promises';
 import { hostname, loadavg } from 'node:os';
 import type { FastifyInstance } from 'fastify';
@@ -75,7 +75,7 @@ async function lastUnattended(): Promise<string | null> {
 
 // Stream a command's output to a WebSocket. killOnClose=false for agentos-update: closing the
 // tab must not kill apt mid-upgrade.
-export function streamToSocket(socket: WebSocket, args: string[], killOnClose = true): void {
+export function streamToSocket(socket: WebSocket, args: string[], killOnClose = true): ChildProcess {
   const child = spawn(args[0], args.slice(1), { stdio: ['ignore', 'pipe', 'pipe'] });
   const send = (b: Buffer) => socket.readyState === socket.OPEN && socket.send(b.toString('utf8'));
   child.stdout.on('data', send);
@@ -83,7 +83,11 @@ export function streamToSocket(socket: WebSocket, args: string[], killOnClose = 
   child.on('error', (e) => { send(Buffer.from(`\n[${e.message}]\n`)); socket.close(); });
   child.on('close', (code) => { send(Buffer.from(`\n[exit ${code}]\n`)); socket.close(); });
   if (killOnClose) socket.on('close', () => child.kill());
+  return child;
 }
+
+// One agentos-update at a time: two concurrent runs would fight over the apt lock.
+let updateRunning = false;
 
 export function systemRoutes(app: FastifyInstance, deps: Deps): void {
   app.get('/api/me', async (req) => {
@@ -121,7 +125,12 @@ export function systemRoutes(app: FastifyInstance, deps: Deps): void {
     }
   });
   app.get('/api/system/update', { websocket: true }, (socket, req) => {
+    if (updateRunning) return socket.close(1013, 'agentos-update is already running');
+    updateRunning = true;
     deps.audit(req.login, 'update', '-');
-    streamToSocket(socket, argv({ name: 'update' }), false);
+    const child = streamToSocket(socket, argv({ name: 'update' }), false);
+    const done = () => { updateRunning = false; };
+    child.on('close', done);
+    child.on('error', done);
   });
 }

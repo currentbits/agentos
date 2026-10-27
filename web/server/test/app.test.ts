@@ -67,6 +67,22 @@ describe('HTTP auth through the app', () => {
     expect(api404.json()).toEqual({ error: 'not found' });
     expect((await app.inject({ url: '/', headers: { host: H.host } })).statusCode).toBe(401);
   });
+
+  it('serves only noVNC core/ and vendor/, not vnc.html or anything else in its root', async () => {
+    const novnc = mkdtempSync(join(tmpdir(), 'novnc-'));
+    mkdirSync(join(novnc, 'core'));
+    mkdirSync(join(novnc, 'vendor'));
+    writeFileSync(join(novnc, 'core', 'rfb.js'), 'export default class RFB {}');
+    writeFileSync(join(novnc, 'vendor', 'pako.js'), 'PAKO');
+    writeFileSync(join(novnc, 'vnc.html'), 'FULL-NOVNC-APP');
+    const app = await buildApp(fakeDeps(() => ({}), { novncRoot: novnc }).deps);
+    expect((await app.inject({ url: '/novnc/core/rfb.js', headers: H })).body).toContain('class RFB');
+    expect((await app.inject({ url: '/novnc/vendor/pako.js', headers: H })).body).toBe('PAKO');
+    for (const url of ['/novnc/vnc.html', '/novnc/core/../vnc.html', '/novnc/core/%2e%2e/vnc.html']) {
+      const r = await app.inject({ url, headers: H });
+      expect(r.body).not.toContain('FULL-NOVNC-APP');
+    }
+  });
 });
 
 describe('JSON body parsing', () => {
@@ -132,5 +148,31 @@ describe('cachedTailnetName', () => {
     const results = await Promise.all(Array.from({ length: 5 }, () => tsName()));
     expect(calls).toBe(1);
     expect(results).toEqual(Array(5).fill('box.tail1234.ts.net'));
+  });
+
+  it('does not cache a missing name: the next call asks tailscale again', async () => {
+    const outs = ['', '{"Self":{"DNSName":"box.tail1234.ts.net."}}'];
+    let calls = 0;
+    const run: Runner = async () => ({ code: 0, stdout: outs[calls++] ?? '', stderr: '' });
+    const tsName = cachedTailnetName(run, 60_000);
+    expect(await tsName()).toBeNull();
+    expect(await tsName()).toBe('box.tail1234.ts.net');
+    expect(await tsName()).toBe('box.tail1234.ts.net');
+    expect(calls).toBe(2);
+  });
+});
+
+describe('Sec-Fetch-Site', () => {
+  it('rejects a cross-site request with 403, and allows same-origin or an absent header', async () => {
+    const app = await buildApp(fakeDeps().deps);
+    expect((await app.inject({ url: '/api/nope', headers: { ...H, 'sec-fetch-site': 'cross-site' } })).statusCode).toBe(403);
+    expect((await app.inject({ method: 'POST', url: '/api/nope', headers: { ...HM, 'sec-fetch-site': 'cross-site' }, payload: {} })).statusCode).toBe(403);
+    expect((await app.inject({ url: '/api/nope', headers: { ...H, 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'cors', 'sec-fetch-dest': 'empty' } })).statusCode).toBe(403);
+    expect((await app.inject({ method: 'POST', url: '/api/nope', payload: {},
+      headers: { ...HM, 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' } })).statusCode).toBe(403);
+    // A link to the console from another site (chat, email) is a top-level GET navigation: allowed.
+    expect((await app.inject({ url: '/api/nope', headers: { ...H, 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' } })).statusCode).toBe(404);
+    expect((await app.inject({ url: '/api/nope', headers: { ...H, 'sec-fetch-site': 'same-origin' } })).statusCode).toBe(404);
+    expect((await app.inject({ url: '/api/nope', headers: H })).statusCode).toBe(404);
   });
 });

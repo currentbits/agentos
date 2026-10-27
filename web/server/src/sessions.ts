@@ -60,7 +60,10 @@ async function readSidecars(home: string): Promise<Map<string, Sidecar>> {
   for (const f of files) {
     const name = f.replace(/\.json$/, '');
     if (!f.endsWith('.json') || !NAME_RE.test(name)) continue;
-    try { out.set(name, JSON.parse(await readFile(join(sidecarDir(home), f), 'utf8'))); } catch { /* skip a corrupt sidecar */ }
+    try {
+      const s: unknown = JSON.parse(await readFile(join(sidecarDir(home), f), 'utf8'));
+      if (s && typeof s === 'object' && !Array.isArray(s)) out.set(name, s as Sidecar);   // skip null, numbers, arrays
+    } catch { /* skip a corrupt sidecar */ }
   }
   return out;
 }

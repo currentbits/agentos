@@ -56,11 +56,19 @@ export interface RequestFacts {
   login: string | undefined;
   origin: string | undefined;
   xAgentOS: string | undefined;
+  fetchSite?: string;   // Sec-Fetch-Site, Sec-Fetch-Mode, Sec-Fetch-Dest
+  fetchMode?: string;
+  fetchDest?: string;
   upgrade: boolean;
 }
 
 export function decide(f: RequestFacts, users: string[], tsName: string | null): Verdict {
   if (!hostAllowed(f.host, tsName)) return { ok: false, status: 403, body: 'bad host' };
+  // Browsers send Sec-Fetch-Site on every request; curl and tests don't, so absent is allowed.
+  // A cross-site request is refused, except a top-level GET navigation: a link to the console
+  // from chat or email must still open it.
+  const navigation = f.method === 'GET' && f.fetchMode === 'navigate' && f.fetchDest === 'document';
+  if (f.fetchSite === 'cross-site' && !navigation) return { ok: false, status: 403, body: 'cross-site request' };
   const login = f.login?.trim().toLowerCase();
   if (!login) return { ok: false, status: 401, body: 'no Tailscale identity' };
   if (users.length === 0) return { ok: false, status: 403, body: notConfiguredPage(login), html: true };
@@ -88,6 +96,9 @@ export function authHook(conf: () => WebConf, tsName: () => Promise<string | nul
       login: one(req.headers['tailscale-user-login']),
       origin: one(req.headers.origin),
       xAgentOS: one(req.headers['x-agentos']),
+      fetchSite: one(req.headers['sec-fetch-site']),
+      fetchMode: one(req.headers['sec-fetch-mode']),
+      fetchDest: one(req.headers['sec-fetch-dest']),
       upgrade: one(req.headers.upgrade)?.toLowerCase() === 'websocket',
     }, conf().users, await tsName());
     if (v.ok) {

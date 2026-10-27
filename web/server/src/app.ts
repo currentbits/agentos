@@ -1,5 +1,6 @@
 // Fastify app: the auth hook first, then the API, then the static UI with an SPA fallback.
 import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import fastifyStatic from '@fastify/static';
 import fastifyWebsocket from '@fastify/websocket';
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -34,9 +35,10 @@ export function cachedTailnetName(run: Runner, ttlMs = 60_000): () => Promise<st
     inflight ??= run(['tailscale', 'status', '--json'], { timeoutMs: 5000 })
       .then((r) => parseTailnetName(r.stdout))
       .finally(() => { inflight = null; });
-    value = await inflight;
-    at = Date.now();
-    return value;
+    const v = await inflight;
+    // Cache only a real name: a failed lookup (tailscaled starting, logged out) is retried next time.
+    if (v !== null) { value = v; at = Date.now(); }
+    return v;
   };
 }
 
@@ -93,8 +95,11 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   vncRoutes(app, deps, undefined, deps.vncTokenDir);
   systemRoutes(app, deps);
 
-  if (deps.novncRoot && existsSync(deps.novncRoot)) {
-    await app.register(fastifyStatic, { root: deps.novncRoot, prefix: '/novnc/', decorateReply: false });
+  // Only what DesktopView imports (core/rfb.js and the vendor/ modules it loads), not noVNC's own
+  // app (vnc.html and friends). Separate roots, so "core/../vnc.html" can't climb out.
+  for (const dir of ['core', 'vendor']) {
+    const root = deps.novncRoot && join(deps.novncRoot, dir);
+    if (root && existsSync(root)) await app.register(fastifyStatic, { root, prefix: `/novnc/${dir}/`, decorateReply: false });
   }
   if (deps.uiRoot && existsSync(deps.uiRoot)) {
     await app.register(fastifyStatic, { root: deps.uiRoot, prefix: '/' });

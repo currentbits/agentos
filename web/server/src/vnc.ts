@@ -44,6 +44,7 @@ export function vncRoutes(app: FastifyInstance, deps: Deps, upstreamBase = WEBSO
     pipeSockets(socket, async () => {
       const n = desktopNumber(req.params.n);
       if (!(await activeDesktops(deps)).includes(n)) throw new Error(`desktop ${n} is not running`);
+      deps.audit(req.login, 'vnc-connect', String(n));
       const token = parseToken(await readFile(`${tokenDir}/${n}`, 'utf8'));
       return new WebSocket(`${upstreamBase}?token=${token}`, ['binary']);
     });

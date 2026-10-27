@@ -1,9 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { execRunner } from '../src/run.js';
-import { attachArgv, parseClientMsg } from '../src/terminal.js';
-import { fakeDeps, H } from './helpers.js';
+import { attachArgv, parseClientMsg, pipePty, termSize } from '../src/terminal.js';
+import { fakeDeps, H, LOGIN } from './helpers.js';
 
 describe('terminal protocol', () => {
   it('parses client frames', () => {
@@ -15,6 +15,60 @@ describe('terminal protocol', () => {
   });
   it('attaches by exact name', () => {
     expect(attachArgv('ag-x')).toEqual(['attach-session', '-t', '=ag-x']);
+  });
+  it('validates the initial size like resize frames, falling back to 80x24', () => {
+    expect(termSize({ cols: '120', rows: '40' })).toEqual({ cols: 120, rows: 40 });
+    expect(termSize({ cols: '1000', rows: '1' })).toEqual({ cols: 1000, rows: 1 });
+    for (const q of [{}, { cols: '0', rows: '40' }, { cols: '-5', rows: '40' }, { cols: '1001', rows: '40' },
+      { cols: '1.5', rows: '40' }, { cols: 'abc', rows: '40' }, { cols: '120' }]) {
+      expect(termSize(q)).toEqual({ cols: 80, rows: 24 });
+    }
+  });
+});
+
+describe('terminal backpressure', () => {
+  it('pauses the pty above 1 MiB buffered and resumes below 256 KiB', () => {
+    const cbs: (() => void)[] = [];
+    const sent: string[] = [];
+    const socket = { OPEN: 1, readyState: 1, bufferedAmount: 0, send: (d: string, cb: () => void) => { sent.push(d); cbs.push(cb); } };
+    let onData: (d: string) => void = () => {};
+    const term = { paused: false, onData: (f: (d: string) => void) => { onData = f; }, pause() { this.paused = true; }, resume() { this.paused = false; } };
+    pipePty(socket, term);
+    onData('a');
+    expect(term.paused).toBe(false);
+    socket.bufferedAmount = 2 * 1024 * 1024;
+    onData('b');
+    expect(term.paused).toBe(true);
+    socket.bufferedAmount = 512 * 1024;
+    cbs.shift()!();
+    expect(term.paused).toBe(true);
+    socket.bufferedAmount = 0;
+    cbs.shift()!();
+    expect(term.paused).toBe(false);
+    expect(sent).toEqual(['a', 'b']);
+  });
+});
+
+describe('terminal route', () => {
+  it('audits terminal-attach for a live session', async () => {
+    const { deps, audits } = fakeDeps((argv) => (argv[1] === 'list-sessions' ? { stdout: 'ag-x:1761480000:0\n' } : {}));
+    const app = await buildApp(deps);
+    await app.ready();
+    const ws = await app.injectWS('/api/sessions/ag-x/terminal', { headers: { ...H, origin: 'http://127.0.0.1:7070' } });
+    await vi.waitFor(() => expect(audits).toEqual([`${LOGIN} terminal-attach ag-x`]));
+    ws.terminate();
+    await app.close();
+  });
+  it('closes with 1008 for a session that is not running, and audits nothing', async () => {
+    const { deps, audits } = fakeDeps();
+    const app = await buildApp(deps);
+    await app.ready();
+    const ws = await app.injectWS('/api/sessions/ag-gone/terminal', { headers: { ...H, origin: 'http://127.0.0.1:7070' } });
+    const [code, reason] = await new Promise<[number, string]>((r) => ws.once('close', (c: number, b: Buffer) => r([c, b.toString()])));
+    expect(code).toBe(1008);
+    expect(reason).toBe('no running session ag-gone');
+    expect(audits).toEqual([]);
+    await app.close();
   });
 });
 

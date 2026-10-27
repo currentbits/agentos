@@ -34,8 +34,12 @@ export function Settings({ me }: { me: Me | null }) {
   const ts = usePoll(() => api<Tailscale>('/api/system/tailscale'));
   const save = async (values: Record<string, string>) => {
     if (values.AGENTOS_WEB_USERS !== undefined) values = { ...values, AGENTOS_WEB_USERS: values.AGENTOS_WEB_USERS.replace(/\s+/g, '') };
-    await api('/api/settings', 'PUT', { values });
-    settings.reload();
+    // Reload on failure too: keys saved before the failing one were written and applied.
+    try {
+      await api('/api/settings', 'PUT', { values });
+    } finally {
+      settings.reload();
+    }
   };
   const saveOne = (key: string, value: string) => save({ [key]: value });
   const webGuard = (changed: Record<string, string>) => {

@@ -52,6 +52,17 @@ describe('settings', () => {
     expect(calls.some((c) => c.argv.includes('apply'))).toBe(false);
   });
 
+  it('still applies the keys written before a failure, then reports the failing field', async () => {
+    const { deps, calls, audits } = fakeDeps((argv) => (argv[4] === 'AGENTOS_MAX_DESKTOPS' ? { code: 2, stderr: 'AGENTOS_MAX_DESKTOPS must be 1-16\n' } : {}));
+    const app = await buildApp(deps);
+    const r = await app.inject({ method: 'PUT', url: '/api/settings', headers: HM, payload: { values: { AGENTOS_LAN_SSH: '1', AGENTOS_MAX_DESKTOPS: '99', AGENTOS_WEB: '1' } } });
+    expect(r.statusCode).toBe(400);
+    expect(r.json()).toEqual({ error: 'AGENTOS_MAX_DESKTOPS must be 1-16', field: 'AGENTOS_MAX_DESKTOPS' });
+    expect(calls.at(-1)!.argv).toEqual(['sudo', '-n', '/usr/local/bin/agentos-config', 'apply']);
+    expect(calls.some((c) => c.argv[4] === 'AGENTOS_WEB')).toBe(false);
+    expect(audits).toEqual([`${LOGIN} config-set AGENTOS_LAN_SSH`, `${LOGIN} config-apply -`]);
+  });
+
   it('rejects unknown keys and multi-line values before running anything', async () => {
     const { deps, calls } = fakeDeps();
     const app = await buildApp(deps);
@@ -81,5 +92,15 @@ describe('ssh keys', () => {
     expect(calls.at(-1)!.argv).toEqual(['sudo', '-n', '/usr/local/bin/agentos-config', 'remove-ssh-key', fp]);
     expect((await app.inject({ method: 'POST', url: '/api/ssh-keys/remove', headers: HM, payload: { fingerprint: '; rm -rf /' } })).statusCode).toBe(400);
     expect(audits).toEqual([`${LOGIN} ssh-key-add -`, `${LOGIN} ssh-key-remove ${fp}`]);
+  });
+  it('rejects a multi-line key paste before running anything', async () => {
+    const { deps, calls } = fakeDeps();
+    const app = await buildApp(deps);
+    for (const key of ['ssh-ed25519 AAAA a@x\nssh-ed25519 BBBB b@x', 'ssh-ed25519 AAAA a@x\rcommand="x"']) {
+      const r = await app.inject({ method: 'POST', url: '/api/ssh-keys', headers: HM, payload: { key } });
+      expect(r.statusCode).toBe(400);
+      expect(r.json().field).toBe('key');
+    }
+    expect(calls).toEqual([]);
   });
 });

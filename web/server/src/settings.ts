@@ -40,13 +40,20 @@ export async function saveSettings(deps: Deps, values: Record<string, unknown>, 
     if (![...PLAIN_KEYS, ...WRITE_ONLY_KEYS].includes(key)) throw new HttpError(400, `unknown setting ${key}`, key);
     if (typeof value !== 'string' || /[\r\n]/.test(value)) throw new HttpError(400, 'value must be a single line', key);
   }
+  let written = 0;
+  let failed: HttpError | null = null;
   for (const [key, value] of entries) {
     const r = await runAction(deps.run, { name: 'config-set', key }, { input: value as string });
-    if (r.code !== 0) throw new HttpError(400, r.stderr.trim() || 'rejected', key);
+    if (r.code !== 0) { failed = new HttpError(400, r.stderr.trim() || 'rejected', key); break; }
     deps.audit(login, 'config-set', key);
+    written++;
   }
+  // Keys written before a failure are in agentos.env already: apply them, so the file and the
+  // running system agree, then report the failing field.
+  if (written === 0) throw failed!;
   const r = await runAction(deps.run, { name: 'config-apply' }, { timeoutMs: 300_000 });
   deps.audit(login, 'config-apply', '-');
+  if (failed) throw failed;
   if (r.code !== 0) throw new HttpError(502, 'saved, but applying failed: see journalctl -u agentos-firstboot');
 }
 
@@ -70,7 +77,9 @@ export function settingsRoutes(app: FastifyInstance, deps: Deps): void {
     return r.code === 0 ? parseFingerprints(r.stdout) : [];
   });
   app.post<{ Body: { key?: string } }>('/api/ssh-keys', async (req) => {
-    const r = await runAction(deps.run, { name: 'add-ssh-key' }, { input: String(req.body?.key ?? '').trim() });
+    const key = String(req.body?.key ?? '').trim();
+    if (/[\r\n]/.test(key)) throw new HttpError(400, 'paste one key, on a single line', 'key');
+    const r = await runAction(deps.run, { name: 'add-ssh-key' }, { input: key });
     if (r.code !== 0) throw new HttpError(400, r.stderr.trim());
     deps.audit(req.login, 'ssh-key-add', '-');
     return { ok: true };

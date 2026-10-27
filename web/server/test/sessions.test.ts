@@ -99,6 +99,17 @@ describe('sessions API', () => {
     ]);
   });
 
+  it('skips a sidecar that parses to something other than an object', async () => {
+    const { deps } = fakeDeps();
+    mkdirSync(join(deps.home, '.config/agentos/sessions'), { recursive: true });
+    for (const [n, body] of [['nul', 'null'], ['num', '42'], ['arr', '[]']]) writeFileSync(join(deps.home, `.config/agentos/sessions/${n}.json`), body);
+    writeFileSync(join(deps.home, '.config/agentos/sessions/ok.json'), JSON.stringify({ cli: 'shell', dir: deps.home, created: 'c', createdBy: LOGIN }));
+    const app = await buildApp(deps);
+    const r = await app.inject({ url: '/api/sessions', headers: H });
+    expect(r.statusCode).toBe(200);
+    expect(r.json().map((s: { id: string }) => s.id)).toEqual(['ag-ok']);
+  });
+
   it('stops only a live session, by exact name, and removes only ended ones', async () => {
     const { deps, calls } = fakeDeps((argv) => (argv[1] === 'list-sessions' ? { stdout: 'ag-a:1761480000:0\n' } : {}));
     mkdirSync(join(deps.home, '.config/agentos/sessions'), { recursive: true });
