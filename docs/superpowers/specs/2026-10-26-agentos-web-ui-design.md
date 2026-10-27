@@ -80,7 +80,7 @@ Values are validated by `agentos-config` itself, so console and web behaviour ar
   - login not on the list → 403.
 - **Not configured.** When `AGENTOS_WEB_USERS` is empty, every request gets a static page: "You are `<login>`. Add yourself: `sudo agentos-config set AGENTOS_WEB_USERS <login>`". No API is reachable.
 - **CSRF.** Mutating requests (POST, PUT, DELETE) need the header `X-AgentOS: 1` and an `Origin` equal to the serve hostname. WebSocket upgrades check `Origin` the same way.
-- **Accepted residual risk.** Processes on the machine can reach `127.0.0.1:7070` and forge the identity header. They already run as `agent` with sudo, so this grants nothing new.
+- **Accepted residual risk.** Processes on the machine that run as root (tailscaled, for `tailscale serve`) or as `agent` can reach `127.0.0.1:7070` and forge the identity header. Both already have root or sudo, so this grants nothing new. Every other local user is refused: an nftables output rule in `table inet agentos` resets loopback connections to TCP port 7070 from any uid but 0 and 1000. Cross-site browser requests (`Sec-Fetch-Site: cross-site`) are refused too, except a top-level GET navigation.
 - **Secrets.**
   - The API never returns secret values. "Set / not set" comes from reading key names only.
   - Secret values are sent only on write.
@@ -112,12 +112,13 @@ The layout is a sidebar (Overview, Sessions, Desktops, Settings, System). The he
 - **Stop.** Confirm, then `tmux kill-session`. The sidecar stays, marked ended.
 - **Open terminal** (Overview, System) creates a `shell` session.
 - **After a reboot.** tmux sessions don't survive a reboot. The UI lists their sidecars as *ended*, with a Remove button.
+- **tmux environment.** All of agent's sessions share one tmux server, and whichever process starts that server first (the web service, an SSH login or the console) sets its global environment. Sessions created later inherit it; `bash -l` still loads the login profile, so PATH and API keys are current.
 
 ### Desktops
 - **Grid.** One card per running desktop:
   - a thumbnail refreshed every 5 s (a PNG from `scrot`, scaled to 480 px wide);
   - idle time against the reaper's limit;
-  - whether a viewer is attached.
+  - whether a viewer is attached. Only an open live view counts as a viewer: the thumbnails don't, so the reaper can still stop a desktop that is only shown in the grid. The page says so in a hint line.
 - **New / Destroy.** Same semantics as the MCP tools: systemd `agentos-desktop@N`, max from `desktop.conf`. Destroy asks for confirmation.
 - **Open.** An embedded noVNC view with a *View only* (default) / *Take control* toggle and full-screen.
 
