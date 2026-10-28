@@ -14,6 +14,7 @@ import { terminalRoutes } from './terminal.js';
 import { desktopRoutes } from './desktops.js';
 import { TOKEN_DIR, vncRoutes } from './vnc.js';
 import { systemRoutes } from './system.js';
+import { ciRoutes } from './ci.js';
 import { solentaRoutes } from './solenta.js';
 
 export interface Deps {
@@ -97,6 +98,7 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   desktopRoutes(app, deps);
   vncRoutes(app, deps, undefined, deps.vncTokenDir);
   systemRoutes(app, deps);
+  ciRoutes(app, deps);
   solentaRoutes(app, deps);
 
   // Only what DesktopView imports (core/rfb.js and the vendor/ modules it loads), not noVNC's own

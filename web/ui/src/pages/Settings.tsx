@@ -3,6 +3,7 @@ import { confirmAction } from '../components/Confirm';
 import { ErrorText } from '../components/ErrorText';
 import { SecretField } from '../components/SecretField';
 import { type FieldSpec, SettingsForm } from '../components/SettingsForm';
+import { SolentaCard } from '../components/SolentaCard';
 import { SshKeys } from '../components/SshKeys';
 import type { Me, Settings as SettingsData, Tailscale } from '../types';
 import { usePoll } from '../usePoll';
@@ -21,13 +22,18 @@ const DESKTOPS: FieldSpec[] = [
   { key: 'AGENTOS_SCREENSHOT_WIDTH', label: 'Screenshot width (640-1920)', type: 'number' },
   { key: 'AGENTOS_DESKTOP_IDLE_MINUTES', label: 'Stop idle desktops after (minutes, 0 = never)', type: 'number' },
 ];
+const SOLENTA_CI: FieldSpec[] = [
+  { key: 'AGENTOS_SOLENTA', label: 'Keep Solenta (Mode A) running on this box', type: 'bool' },
+  { key: 'AGENTOS_CI_MAX_PARALLEL', label: 'CI runs at once (1-16, default 2)', type: 'number' },
+];
 const WEB: FieldSpec[] = [
   { key: 'AGENTOS_WEB_USERS', label: 'Allowed tailnet logins (comma-separated)', type: 'text' },
   { key: 'AGENTOS_WEB', label: 'Web UI enabled', type: 'bool' },
 ];
 
-// AGENTOS_AUTO_REBOOT and AGENTOS_WEB default to on when unset: show unset as '1'.
-const withDefaults = (v: Record<string, string>) => ({ ...v, AGENTOS_AUTO_REBOOT: v.AGENTOS_AUTO_REBOOT || '1', AGENTOS_WEB: v.AGENTOS_WEB || '1' });
+// AGENTOS_AUTO_REBOOT, AGENTOS_WEB and AGENTOS_SOLENTA default to on when unset: show unset as '1'.
+const withDefaults = (v: Record<string, string>) => ({ ...v, AGENTOS_AUTO_REBOOT: v.AGENTOS_AUTO_REBOOT || '1', AGENTOS_WEB: v.AGENTOS_WEB || '1',
+  AGENTOS_SOLENTA: v.AGENTOS_SOLENTA || '1' });
 
 export function Settings({ me }: { me: Me | null }) {
   const settings = usePoll(() => api<SettingsData>('/api/settings'));
@@ -68,6 +74,8 @@ export function Settings({ me }: { me: Me | null }) {
             <SecretField name="TS_AUTHKEY" label="Auth key (tskey-auth-…)" onSave={saveOne} />
           </div>
           <SshKeys />
+          <SolentaCard />
+          <SettingsForm title="Solenta and CI" fields={SOLENTA_CI} values={withDefaults(s.values)} onSave={save} />
           <SettingsForm title="Access and console" fields={ACCESS} values={withDefaults(s.values)} onSave={save} />
           <SettingsForm title="Desktops" fields={DESKTOPS} values={s.values} onSave={save} />
           <SettingsForm title="Web UI" fields={WEB} values={withDefaults(s.values)} onSave={save} beforeSave={webGuard} />

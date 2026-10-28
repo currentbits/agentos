@@ -73,11 +73,22 @@ async function lastUnattended(): Promise<string | null> {
   }
 }
 
+const HIGH_WATER = 1024 * 1024;
+const LOW_WATER = 256 * 1024;
+
 // Stream a command's output to a WebSocket. killOnClose=false for agentos-update: closing the
-// tab must not kill apt mid-upgrade.
+// tab must not kill apt mid-upgrade. Backpressure as in terminal.ts: a slow browser pauses the
+// command's pipes (so a big CI log or journal can't grow the socket buffer without bound).
 export function streamToSocket(socket: WebSocket, args: string[], killOnClose = true): ChildProcess {
   const child = spawn(args[0], args.slice(1), { stdio: ['ignore', 'pipe', 'pipe'] });
-  const send = (b: Buffer) => socket.readyState === socket.OPEN && socket.send(b.toString('utf8'));
+  let paused = false;
+  const send = (b: Buffer) => {
+    if (socket.readyState !== socket.OPEN) return;
+    socket.send(b.toString('utf8'), () => {
+      if (paused && socket.bufferedAmount < LOW_WATER) { paused = false; child.stdout.resume(); child.stderr.resume(); }
+    });
+    if (!paused && socket.bufferedAmount > HIGH_WATER) { paused = true; child.stdout.pause(); child.stderr.pause(); }
+  };
   child.stdout.on('data', send);
   child.stderr.on('data', send);
   child.on('error', (e) => { send(Buffer.from(`\n[${e.message}]\n`)); socket.close(); });

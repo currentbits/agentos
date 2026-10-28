@@ -12,7 +12,8 @@ export const SECRET_KEYS = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GROK_CODE_XA
 // firstboot deletes it once used): the UI shows Tailscale's own status instead.
 export const WRITE_ONLY_KEYS = [...SECRET_KEYS, 'TS_AUTHKEY'];
 export const PLAIN_KEYS = ['AGENTOS_LAN_SSH', 'AGENTOS_CONSOLE', 'AGENTOS_AUTO_REBOOT', 'AGENTOS_MAX_DESKTOPS',
-  'AGENTOS_SCREENSHOT_WIDTH', 'AGENTOS_DESKTOP_IDLE_MINUTES', 'AGENTOS_WEB_USERS', 'AGENTOS_WEB'];
+  'AGENTOS_SCREENSHOT_WIDTH', 'AGENTOS_DESKTOP_IDLE_MINUTES', 'AGENTOS_WEB_USERS', 'AGENTOS_WEB',
+  'AGENTOS_SOLENTA', 'AGENTOS_CI_MAX_PARALLEL'];
 
 export interface SettingsView { values: Record<string, string>; secrets: Record<string, boolean> }
 

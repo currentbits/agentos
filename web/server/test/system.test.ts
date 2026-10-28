@@ -58,6 +58,21 @@ describe('system parsers', () => {
     expect((await app.inject({ method: 'POST', url: '/api/system/services/docker.service/restart', headers: HM })).statusCode).toBe(200);
     expect(calls.at(-1)!.argv).toEqual(['sudo', '-n', 'systemctl', 'restart', 'docker.service']);
   });
+  it('pauses the command while the socket is backed up, resumes once it drains', async () => {
+    const cbs: (() => void)[] = [];
+    const sent: string[] = [];
+    const s = Object.assign(new EventEmitter(), { OPEN: 1, readyState: 1, bufferedAmount: 0,
+      send: (d: string, cb: () => void) => { sent.push(d); cbs.push(cb); }, close: () => {} });
+    const child = streamToSocket(s as never, ['node', '-e', 'setInterval(()=>process.stdout.write("x".repeat(1000)),5)']);
+    while (sent.length === 0) await delay(10);
+    s.bufferedAmount = 2 * 1024 * 1024;
+    while (!child.stdout!.isPaused()) await delay(10);
+    s.bufferedAmount = 0;
+    cbs.at(-1)!();
+    expect(child.stdout!.isPaused()).toBe(false);
+    child.kill();
+  });
+
   it('kills the journal stream on socket close, but leaves the update stream running', async () => {
     const journal = fakeSocket();
     streamToSocket(journal, PID_SCRIPT, true);

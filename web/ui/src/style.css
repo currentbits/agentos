@@ -37,3 +37,8 @@ td, th { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line
 .term-host, .vnc { flex: 1; min-height: 0; background: #000; }
 fieldset { border: 0; padding: 0; display: flex; gap: 16px; }
 .keys { padding-left: 16px; }
+.ci-passed { color: var(--ok); }
+.ci-failed, .ci-error { color: var(--bad); }
+.ci-queued, .ci-running, .ci-cancelled, .ci-skipped, .ci-pending { color: var(--muted); }
+.copy { display: flex; gap: 8px; align-items: center; margin: 4px 0; }
+.copy code { overflow-wrap: anywhere; }

@@ -10,8 +10,9 @@ import { Terminal } from './pages/Terminal';
 import { Desktops } from './pages/Desktops';
 import { DesktopView } from './pages/DesktopView';
 import { System } from './pages/System';
+import { CI } from './pages/CI';
 
-const NAV = [['/', 'Overview'], ['/sessions', 'Sessions'], ['/desktops', 'Desktops'], ['/settings', 'Settings'], ['/system', 'System']];
+const NAV = [['/', 'Overview'], ['/sessions', 'Sessions'], ['/desktops', 'Desktops'], ['/ci', 'CI'], ['/settings', 'Settings'], ['/system', 'System']];
 
 function page(path: string, me: Me | null) {
   const [, section, arg] = path.split('/');
@@ -20,6 +21,7 @@ function page(path: string, me: Me | null) {
     case 'sessions': return arg ? <Terminal id={decodeURIComponent(arg)} /> : <Sessions />;
     case 'desktops': return arg ? <DesktopView n={Number(arg)} /> : <Desktops />;
     case 'system': return <System me={me} />;
+    case 'ci': return <CI id={arg ? decodeURIComponent(arg) : undefined} />;
     default: return <Overview />;
   }
 }

@@ -8,7 +8,11 @@ export const UNIT_RE = /^(agentos-[a-z0-9@-]+|docker|tailscaled)\.service$/;
 export const FINGERPRINT_RE = /^SHA256:[A-Za-z0-9+/]{43}$/;
 export const GITHUB_USER_RE = /^[A-Za-z0-9-]{1,39}$/;
 export const DESKTOP_RE = /^([1-9]|1[0-6])$/;
+export const CI = '/usr/local/bin/agentos-ci';
 export const SOLENTA_PAIR = '/usr/local/lib/agentos/solenta-pair';
+export const CI_ID_RE = /^\d{8}-\d{6}-[0-9a-f]{4}$/;
+export const STEP_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
+export const GIT_REF_RE = /^[A-Za-z0-9_][A-Za-z0-9_./@^~{}-]{0,254}$/;   // agentos-ci's REF_RE
 const ABS_PATH_RE = /^\/[^\0\n]*$/;
 
 export type Action =
@@ -25,7 +29,14 @@ export type Action =
   | { name: 'poweroff' }
   | { name: 'desktop-start'; n: number }
   | { name: 'desktop-stop'; n: number }
-  | { name: 'solenta-status'; path?: string };          // runs as agent (this service's user): no sudo
+  // agentos-ci and solenta-pair run as agent (this service's user): no sudo.
+  | { name: 'ci-run'; path: string; ref: string }
+  | { name: 'ci-status'; id: string }
+  | { name: 'ci-list'; repo?: string; limit: number }
+  | { name: 'ci-cancel'; id: string }
+  | { name: 'ci-log'; id: string; step: string }       // streamed: logs --follow
+  | { name: 'ci-remotes' }
+  | { name: 'solenta-status'; path?: string };
 
 function need(ok: boolean, what: string): void {
   if (!ok) throw new HttpError(400, `invalid ${what}`);
@@ -47,6 +58,16 @@ export function argv(a: Action): string[] {
     case 'poweroff': return [...sudo, 'systemctl', 'poweroff'];
     case 'desktop-start': need(DESKTOP_RE.test(String(a.n)), 'desktop'); return ['systemctl', '--no-ask-password', 'start', `agentos-desktop@${a.n}.service`];
     case 'desktop-stop': need(DESKTOP_RE.test(String(a.n)), 'desktop'); return ['systemctl', '--no-ask-password', 'stop', `agentos-desktop@${a.n}.service`];
+    case 'ci-run': need(ABS_PATH_RE.test(a.path), 'path'); need(GIT_REF_RE.test(a.ref), 'ref');
+      return [CI, 'run', '--json', '--source', 'web', '--ref', a.ref, '--', a.path];
+    case 'ci-status': need(CI_ID_RE.test(a.id), 'run id'); return [CI, 'status', '--json', a.id];
+    case 'ci-list': need(Number.isInteger(a.limit) && a.limit >= 1 && a.limit <= 200, 'limit');
+      if (a.repo !== undefined) need(ABS_PATH_RE.test(a.repo), 'repo');
+      return [CI, 'list', '--json', '--limit', String(a.limit), ...(a.repo ? [`--repo=${a.repo}`] : [])];
+    case 'ci-cancel': need(CI_ID_RE.test(a.id), 'run id'); return [CI, 'cancel', '--json', a.id];
+    case 'ci-log': need(CI_ID_RE.test(a.id), 'run id'); need(a.step === '' || STEP_RE.test(a.step), 'step');
+      return [CI, 'logs', a.id, '--follow', ...(a.step ? [`--step=${a.step}`] : [])];
+    case 'ci-remotes': return [CI, 'remote', 'list', '--json'];
     case 'solenta-status': if (a.path !== undefined) need(ABS_PATH_RE.test(a.path), 'path');
       return [SOLENTA_PAIR, 'status', ...(a.path ? ['--', a.path] : [])];
   }
