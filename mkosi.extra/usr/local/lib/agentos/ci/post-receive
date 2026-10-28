@@ -1,0 +1,23 @@
+#!/bin/bash
+# agentos-ci post-receive hook, symlinked into ~/git/<name>.git/hooks/ by `agentos-ci remote create`.
+# Starts one CI run per updated branch and tells the pusher the run id. Nothing from the push is
+# ever evaluated: ref names must match a strict pattern, and every value reaches agentos-ci as its
+# own argv word.
+set -uo pipefail
+repo=$(pwd -P)                          # git runs hooks inside the bare repository
+while read -r v; do unset "$v"; done < <(git rev-parse --local-env-vars)
+CI=${AGENTOS_CI:-/usr/local/bin/agentos-ci}
+while read -r _old new ref; do
+  [[ $new =~ ^0+$ ]] && continue        # branch deleted
+  if ! [[ $ref =~ ^refs/heads/[A-Za-z0-9._/-]{1,200}$ ]] || ! git check-ref-format "$ref"; then
+    printf 'agentos-ci: skipped %q: only branches named [A-Za-z0-9._/-] are built\n' "$ref"
+    continue
+  fi
+  branch=${ref#refs/heads/}
+  if id=$("$CI" run --source push --ref "$ref" -- "$repo"); then
+    echo "agentos-ci: run $id for $branch (agentos-ci logs $id --follow)"
+  else
+    echo "agentos-ci: could not start a run for $branch"
+  fi
+done
+exit 0

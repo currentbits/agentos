@@ -29,6 +29,7 @@ vhome=$(runuser -u agent -- mktemp -d)
   done
 } >> /var/lib/agentos-manifest.txt
 { echo "# agentos-computer python (venv shared with agentos-ci)"; /usr/local/lib/agentos/venv/bin/pip freeze --disable-pip-version-check; } >> /var/lib/agentos-manifest.txt
+{ echo "# agentos-ci"; echo "act $(/usr/local/bin/act --version | awk '{print $3}') $(sha256sum /usr/local/bin/act | cut -d' ' -f1)"; } >> /var/lib/agentos-manifest.txt
 { echo "# agentos-web npm"; node -e '
     const d = "/usr/local/lib/agentos/web/server";
     for (const n of Object.keys(require(d + "/package.json").dependencies))

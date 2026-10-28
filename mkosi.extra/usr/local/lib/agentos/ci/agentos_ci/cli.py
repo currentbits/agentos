@@ -3,7 +3,7 @@ import argparse
 import json
 import sys
 
-from . import pipeline, runs
+from . import pipeline, remotes, runs
 
 
 def parser() -> argparse.ArgumentParser:
@@ -28,6 +28,11 @@ def parser() -> argparse.ArgumentParser:
     ls.add_argument("--limit", type=int, default=20)
     c = sub.add_parser("cancel", parents=[common], help="cancel a run")
     c.add_argument("id")
+    rm = sub.add_parser("remote", help="push remotes in ~/git")
+    rsub = rm.add_subparsers(dest="rcmd", required=True)
+    rc = rsub.add_parser("create", parents=[common])
+    rc.add_argument("name")
+    rsub.add_parser("list", parents=[common])
     for hidden in ("_spawn", "_worker"):
         sub.add_parser(hidden).add_argument("id")
     return p
@@ -75,6 +80,12 @@ def main(argv=None) -> int:
         elif args.cmd == "cancel":
             run = runs.cancel(args.id)
             out(args, run, f"{run['id']} {run['status']}")
+        elif args.cmd == "remote" and args.rcmd == "create":
+            r = remotes.create(args.name)
+            out(args, r, f"created {r['path']}\nOn your machine: {r['remote_add']}")
+        elif args.cmd == "remote":
+            rs = remotes.list_remotes()
+            out(args, rs, "\n".join(f"{r['name']}  {r['remote_add']}" for r in rs))
         elif args.cmd == "_spawn":
             runs.spawn(args.id)
         elif args.cmd == "_worker":
