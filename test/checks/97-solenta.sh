@@ -125,3 +125,43 @@ check_solenta_real_tarball() {
   vm 'sudo systemctl stop agentos-solenta.service; rm -rf ~/solenta ~/.solenta-new ~/.config/Solenta ~/.solenta-headless.log'
   return "$rc"
 }
+
+# --- Mode B: CLIs and keys over non-login SSH, preflight, reverse forwards ---------------------
+check_clis_over_plain_ssh() {
+  # `vm 'cmd'` is exactly Solenta's case: sshd runs a non-login, non-interactive bash -c.
+  vm 'claude --version && codex --version && opencode --version && grok --version' >/dev/null &&
+  vm 'env -i HOME=/home/agent PATH=/usr/local/bin:/usr/bin:/bin bash -c "claude --version"' >/dev/null
+}
+check_cli_wrapper_passes_api_key() {
+  # Guest-side proof the key is in secrets.env, then that a non-login shell's CLI sees it. A fake
+  # `claude` in a scratch HOME stands in for the real one, which would not print its environment.
+  vm 'grep -qx ANTHROPIC_API_KEY=sk-test-dummy ~/.config/agentos/secrets.env' &&
+  test "$(vm 'h=$(mktemp -d) && mkdir -p $h/.local/bin $h/.config/agentos && cp ~/.config/agentos/secrets.env $h/.config/agentos/ &&
+      printf "#!/bin/sh\necho key=\$ANTHROPIC_API_KEY\n" > $h/.local/bin/claude && chmod +x $h/.local/bin/claude &&
+      env -i HOME=$h PATH=/usr/local/bin:/usr/bin:/bin bash -c claude; rm -rf $h')" = key=sk-test-dummy
+}
+check_solenta_preflight_passes() {
+  vm 'rm -rf ~/work/pf && mkdir -p ~/work/pf && git -C ~/work/pf init -q &&
+      out=$(/usr/local/lib/agentos/solenta-pair status -- ~/work/pf) &&
+      echo "$out" | jq -e "[.preflight[].ok] | all and length == 9" >/dev/null &&
+      echo "$out" | jq -e --arg fp "$(ssh-keygen -l -f /etc/ssh/ssh_host_ed25519_key.pub | cut -d " " -f 2)" \
+        "any(.hostKeys[]; .fingerprint == \$fp) and (.keyscan | startswith(\"ssh-keyscan -t ed25519 \"))" >/dev/null &&
+      sudo agentos-config solenta ~/work/pf | grep -q "PASS  grok:"; rc=$?; rm -rf ~/work/pf; exit $rc'
+}
+check_reverse_forward_loopback_only() {
+  # The bridge's ssh -R from the host: the forward binds only on the VM's loopback (even when it
+  # asks for 0.0.0.0) and reaches the host's server.
+  local hp=47321 rc=0 srv
+  vm 'sudo sshd -T | grep -qx "allowtcpforwarding yes" && sudo sshd -T | grep -qx "gatewayports no"' || return 1
+  mkdir -p "$WORK/fwd" && echo bridge-ok > "$WORK/fwd/index.html"
+  python3 -m http.server "$hp" --bind 127.0.0.1 --directory "$WORK/fwd" >/dev/null 2>&1 & srv=$!
+  ssh -i "$WORK/key" -p "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o LogLevel=ERROR \
+      -o ExitOnForwardFailure=yes -f -N -R "127.0.0.1:47123:127.0.0.1:$hp" -R "0.0.0.0:47124:127.0.0.1:$hp" agent@127.0.0.1 || rc=1
+  vm 'for _ in $(seq 1 20); do curl -fsS -m 2 http://127.0.0.1:47123/ | grep -qx bridge-ok && break; sleep 0.5; done &&
+      curl -fsS -m 2 http://127.0.0.1:47123/ | grep -qx bridge-ok &&
+      test "$(ss -Htln "sport = :47123" | awk "{print \$4}" | sort -u | tr "\n" " ")" = "127.0.0.1:47123 " &&
+      test -z "$(ss -Htln "sport = :47124" | awk "{print \$4}" | grep -vE "^(127\.0\.0\.1|\[::1\]):47124$")"' || rc=1
+  pkill -f "47123:127.0.0.1:$hp" || true
+  kill "$srv" 2>/dev/null || true
+  return "$rc"
+}

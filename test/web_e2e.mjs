@@ -12,10 +12,13 @@ const ctx = await browser.newContext({ extraHTTPHeaders: { 'Tailscale-User-Login
 const page = await ctx.newPage();
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
-for (const [path, heading] of [['/', 'Overview'], ['/sessions', 'Sessions'], ['/desktops', 'Desktops'], ['/settings', 'Settings'], ['/system', 'System']]) {
+for (const [path, heading] of [['/', 'Overview'], ['/sessions', 'Sessions'], ['/desktops', 'Desktops'], ['/ci', 'CI'], ['/settings', 'Settings'], ['/system', 'System']]) {
   await page.goto(BASE + path);
   await page.getByRole('heading', { level: 1, name: heading }).waitFor({ timeout: 15000 }).catch(() => fail(`${path}: no "${heading}" heading`));
 }
+await page.goto(BASE + '/settings');
+await page.getByRole('heading', { level: 2, name: 'Solenta', exact: true }).waitFor({ timeout: 15000 }).catch(() => fail('no Solenta card'));
+await page.getByText('Mode A: Solenta on this box (recommended)').waitFor({ timeout: 15000 }).catch(() => fail('Solenta card has no Mode A'));
 await page.goto(BASE + '/sessions');
 await page.getByLabel('CLI').selectOption('shell');
 await page.getByRole('textbox', { name: 'Name' }).fill(NAME);

@@ -30,7 +30,7 @@ jobs:
       - name: Host setup
         run: |
           sudo apt-get update
-          sudo apt-get install -y qemu-system-x86 qemu-utils ovmf cloud-image-utils mtools pipx shellcheck zstd tmux
+          sudo apt-get install -y qemu-system-x86 qemu-utils ovmf cloud-image-utils mtools pipx shellcheck zstd tmux jq
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           sudo chmod 666 /dev/kvm
           pipx install "git+https://github.com/systemd/mkosi@v27"
@@ -42,12 +42,24 @@ jobs:
             mkosi.extra/usr/local/bin/* mkosi.extra/usr/local/sbin/* mkosi.extra/usr/local/lib/agentos/*.sh \
             mkosi.extra/etc/profile.d/agentos.sh \
             mkosi.extra/usr/local/lib/agentos/web-serve test/web_serve_test.sh \
+            mkosi.extra/usr/local/lib/agentos/{cli-wrapper,register-mcp,solenta-pair,solenta-start} \
+            mkosi.extra/usr/local/lib/agentos/ci/post-receive tools/solenta-bridge \
+            test/wrapper_test.sh test/solenta_pair_test.sh test/bridge_test.sh \
             tools/build-installer.sh test/installer-boot-test.sh test/install-test.sh installer/mkosi.extra/usr/local/sbin/* \
             installer/mkosi.extra/usr/lib/agentos-installer/lib.sh
           test/env_test.sh
           test/installer_test.sh
           python3 test/computer_test.py
           test/web_serve_test.sh
+          test/wrapper_test.sh
+          test/solenta_pair_test.sh
+          test/bridge_test.sh
+
+      - name: agentos-ci unit tests
+        run: |
+          python3 -m venv "$RUNNER_TEMP/ci-venv"
+          "$RUNNER_TEMP/ci-venv/bin/pip" install -q pytest 'pyyaml>=6,<7' 'mcp>=1.28,<2'
+          "$RUNNER_TEMP/ci-venv/bin/python" -m pytest -q test/ci
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:

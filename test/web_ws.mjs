@@ -1,13 +1,15 @@
 // In-VM WebSocket probe for the web UI, using the ws package shipped with the server.
 //   node web_ws.mjs term <session-id> <text-to-type> <expected-output>
 //   node web_ws.mjs vnc <desktop-number>        (expects the VNC server's "RFB 003.008" banner)
+//   node web_ws.mjs cilog <run-id> <step> <expected-output>
 // Prints "WS OK" and exits 0 once the expected text arrives; exits 1 on close, HTTP error or timeout.
 import { createRequire } from 'node:module';
 const require = createRequire('/usr/local/lib/agentos/web/server/');
 const WebSocket = require('ws');
 const [mode, target, typed, expected] = process.argv.slice(2);
-const path = mode === 'term' ? `/api/sessions/${target}/terminal?cols=80&rows=24` : `/api/desktops/${target}/vnc`;
-const want = mode === 'term' ? expected : 'RFB 003.008';
+const path = mode === 'term' ? `/api/sessions/${target}/terminal?cols=80&rows=24`
+  : mode === 'cilog' ? `/api/ci/runs/${target}/log?step=${encodeURIComponent(typed)}` : `/api/desktops/${target}/vnc`;
+const want = mode === 'vnc' ? 'RFB 003.008' : expected;
 const ws = new WebSocket(`ws://127.0.0.1:7070${path}`, {
   headers: { 'Tailscale-User-Login': process.env.LOGIN ?? 'smoke@example.com', Origin: 'http://127.0.0.1:7070' },
 });
