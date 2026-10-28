@@ -2,8 +2,7 @@ import { api } from '../api';
 import { ErrorText } from '../components/ErrorText';
 import { duration, gib, pct } from '../format';
 import { newDesktop, openTerminal } from '../quick';
-import { navigate } from '../router';
-import { Link } from '../router';
+import { Link, navigate } from '../router';
 import type { CiRun, Desktop, Health, Session, Tailscale } from '../types';
 import { usePoll } from '../usePoll';
 

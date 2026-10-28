@@ -8,7 +8,8 @@ const children: (EventEmitter & { stdout: EventEmitter; stderr: EventEmitter; ki
 vi.mock('node:child_process', async (orig) => ({
   ...(await orig<typeof import('node:child_process')>()),
   spawn: vi.fn(() => {
-    const c = Object.assign(new EventEmitter(), { stdout: new EventEmitter(), stderr: new EventEmitter(), kill: () => {} });
+    const pipe = () => Object.assign(new EventEmitter(), { pause: () => {}, resume: () => {} });
+    const c = Object.assign(new EventEmitter(), { stdout: pipe(), stderr: pipe(), kill: () => {} });
     children.push(c);
     return c;
   }),

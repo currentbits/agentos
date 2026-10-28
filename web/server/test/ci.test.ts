@@ -1,6 +1,7 @@
+import { EventEmitter } from 'node:events';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { argv } from '../src/actions.js';
 import { buildApp } from '../src/app.js';
 import { fakeDeps, H, HM, LOGIN } from './helpers.js';
@@ -8,6 +9,17 @@ import { fakeDeps, H, HM, LOGIN } from './helpers.js';
 const CI = '/usr/local/bin/agentos-ci';
 const ID = '20261027-101500-0001';
 const RUN = { id: ID, repo: '/home/agent/work/app', ref: 'HEAD', commit: 'a'.repeat(40), status: 'failed', steps: [] };
+
+// The log WebSocket streams via a real child_process.spawn (not deps.run): mock it to capture argv.
+const spawnCalls: string[][] = [];
+vi.mock('node:child_process', async (orig) => ({
+  ...(await orig<typeof import('node:child_process')>()),
+  spawn: vi.fn((cmd: string, args: string[]) => {
+    spawnCalls.push([cmd, ...args]);
+    const pipe = () => Object.assign(new EventEmitter(), { pause: () => {}, resume: () => {} });
+    return Object.assign(new EventEmitter(), { stdout: pipe(), stderr: pipe(), kill: () => {} });
+  }),
+}));
 
 describe('ci actions', () => {
   it('builds exact argv, values after "--" or as --opt=value', () => {
@@ -80,5 +92,14 @@ describe('ci routes', () => {
     const ws = await app.injectWS(`/api/ci/runs/${ID}/log?step=..%2Frun.json`, { headers: HM });
     const closed = await new Promise<number>((resolve) => ws.on('close', (code) => resolve(code)));
     expect(closed).toBe(1008);
+  });
+
+  it('spawns agentos-ci logs --follow --step for a valid id and step', async () => {
+    const { deps } = fakeDeps();
+    const app = await buildApp(deps);
+    await app.ready();
+    const ws = await app.injectWS(`/api/ci/runs/${ID}/log?step=test`, { headers: HM });
+    expect(spawnCalls.at(-1)).toEqual([CI, 'logs', ID, '--follow', '--step=test']);
+    ws.terminate();
   });
 });

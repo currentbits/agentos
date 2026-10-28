@@ -93,7 +93,13 @@ export function streamToSocket(socket: WebSocket, args: string[], killOnClose = 
   child.stderr.on('data', send);
   child.on('error', (e) => { send(Buffer.from(`\n[${e.message}]\n`)); socket.close(); });
   child.on('close', (code) => { send(Buffer.from(`\n[exit ${code}]\n`)); socket.close(); });
-  if (killOnClose) socket.on('close', () => child.kill());
+  // Resume unconditionally: with killOnClose=false (agentos-update), a socket that closes while
+  // paused for backpressure must not leave the command's pipes stuck full forever.
+  socket.on('close', () => {
+    child.stdout.resume();
+    child.stderr.resume();
+    if (killOnClose) child.kill();
+  });
   return child;
 }
 

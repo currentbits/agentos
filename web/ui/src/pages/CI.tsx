@@ -75,7 +75,7 @@ function RunView({ id }: { id: string }) {
   const final = !!run && FINAL_CI.includes(run.status);
   const step = picked ?? run?.steps.find((s) => s.status === 'failed' || s.status === 'cancelled')?.name
     ?? run?.steps.filter((s) => s.status !== 'pending' && s.status !== 'skipped').at(-1)?.name ?? null;
-  const act = (p: Promise<unknown>) => p.then(reload, (e: Error) => setErr(e.message));
+  const act = (p: Promise<unknown>) => { setErr(null); return p.then(reload, (e: Error) => setErr(e.message)); };
   return (
     <section>
       <h1><Link to="/ci">CI</Link> / {id}</h1>
@@ -87,8 +87,8 @@ function RunView({ id }: { id: string }) {
           {run.secrets.length > 0 && <p className="hint">Secrets exposed: {run.secrets.join(', ')}{run.missing_secrets.length > 0 && ` (not set: ${run.missing_secrets.join(', ')})`}</p>}
           {run.error && <p className="error">{run.error}</p>}
           <div className="actions">
-            <button onClick={() => act(api<{ run_id: string }>(`/api/ci/runs/${id}/rerun`, 'POST').then((r) => navigate(`/ci/${r.run_id}`)))}>Re-run</button>
-            <button disabled={final} onClick={() => confirmAction(`Cancel run ${id}?`) && act(api(`/api/ci/runs/${id}/cancel`, 'POST'))}>Cancel</button>
+            <button onClick={() => act(api<{ run_id: string }>(`/api/ci/runs/${encodeURIComponent(id)}/rerun`, 'POST').then((r) => navigate(`/ci/${r.run_id}`)))}>Re-run</button>
+            <button disabled={final} onClick={() => confirmAction(`Cancel run ${id}?`) && act(api(`/api/ci/runs/${encodeURIComponent(id)}/cancel`, 'POST'))}>Cancel</button>
           </div>
           <table><tbody>
             {run.steps.map((s) => (
