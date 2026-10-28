@@ -84,6 +84,10 @@ def test_ci_yml_full():
     ("secrets: NPM_TOKEN\nsteps:\n  - run: x\n", "secrets"),
     ("timeout: forever\nsteps:\n  - run: x\n", "timeout"),
     ("timeout: 25h\nsteps:\n  - run: x\n", "between"),
+    ("timeout: [30m]\nsteps:\n  - run: x\n", "timeout"),                       # not a scalar: no str() on it
+    ('steps:\n  - {name: "a\\n", run: x}\n', "name must match"),               # a trailing newline, not just "a"
+    ('image: "node:24\\n"\nsteps:\n  - run: x\n', "image"),
+    ('secrets: ["NPM_TOKEN\\n"]\nsteps:\n  - run: x\n', "secrets"),
 ])
 def test_ci_yml_rejects(text, why):
     with pytest.raises(ConfigError, match=why):

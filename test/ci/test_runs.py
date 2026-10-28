@@ -2,10 +2,11 @@ import json
 import os
 import re
 import time
+from pathlib import Path
 
 import pytest
 from conftest import ci_yml, make_repo, sh, wait_final
-from agentos_ci import runs
+from agentos_ci import pipeline, runs
 from agentos_ci.runs import CIError
 
 
@@ -24,12 +25,12 @@ def test_paths_must_be_repos_inside_home(home, tmp_path):
         with pytest.raises(CIError, match=why):
             runs.start(bad)
     repo = make_repo(home / "r", {"a": "1"})
-    for ref in ("-x", "--output=/tmp/x", "a b", "HEAD;id", ""):
+    for ref in ("-x", "--output=/tmp/x", "a b", "HEAD;id", "", "HEAD\n"):
         with pytest.raises(CIError, match="invalid ref"):
             runs.start(repo, ref)
     with pytest.raises(CIError, match="unknown ref"):
         runs.start(repo, "no-such-branch")
-    for bad in ("../x", "20260101-000000-zzzz", "x" * 30):
+    for bad in ("../x", "20260101-000000-zzzz", "x" * 30, "20260101-000000-0000\n"):
         with pytest.raises(CIError, match="invalid run id"):
             runs.status(bad)
 
@@ -119,7 +120,8 @@ def test_queue_respects_max_parallel(home, monkeypatch):
 
 def test_cancel_kills_the_process_group(home):
     pidfile = home / "child.pid"
-    # The step starts a background grandchild in its own group, then waits.
+    # bash -c runs without job control, so a background grandchild stays in the step's process
+    # group (it does not get its own group); killpg on that group kills it too.
     repo = make_repo(home / "r", {".agentos/ci.yml": ci_yml(("s", f"sleep 300 & echo $! > {pidfile}; wait"), ("after", "true"))})
     rid = runs.start(repo)
     deadline = time.monotonic() + 15
@@ -135,15 +137,19 @@ def test_cancel_kills_the_process_group(home):
 
 
 def test_cancel_escalates_to_sigkill(home, monkeypatch):
-    monkeypatch.setattr(runs, "KILL_GRACE", 1)
+    # Forwarded to the detached worker's env by start(), the same way AGENTOS_CI_MAX_PARALLEL is:
+    # monkeypatching runs.KILL_GRACE here would only affect this test process, not the worker.
+    monkeypatch.setenv("AGENTOS_CI_KILL_GRACE", "1")
     repo = make_repo(home / "r", {".agentos/ci.yml": ci_yml(("s", "trap '' TERM; echo ready; while :; do sleep 0.1; done"))})
     rid = runs.start(repo)
     deadline = time.monotonic() + 15
     while "ready" not in runs.logs(rid, None)["text"] and time.monotonic() < deadline:
         time.sleep(0.1)
     t = time.monotonic()
-    assert runs.cancel(rid)["status"] == "cancelled"
-    assert time.monotonic() - t < 14          # the worker's 10 s grace, not cancel's own fallback
+    run = runs.cancel(rid)
+    elapsed = time.monotonic() - t
+    assert run["status"] == "cancelled" and run["error"] is None     # the worker's own TERM->KILL, not cancel's fallback
+    assert 0.9 <= elapsed < 6             # the worker's 1 s grace, well under cancel's own fallback (1 + 5 = 6s)
 
 
 def test_cancel_a_queued_run(home, monkeypatch):
@@ -179,7 +185,7 @@ def test_retention_keeps_the_newest_200_final_runs(home):
     for i in range(205):
         d = rd / f"20260101-000000-{i:04x}"
         d.mkdir(parents=True)
-        (d / "run.json").write_text(json.dumps({"status": "running" if i == 0 else "passed"}))
+        (d / "run.json").write_text(json.dumps({"id": d.name, "status": "running" if i == 0 else "passed"}))
     runs.prune()
     left = sorted(p.name for p in rd.iterdir())
     assert len(left) == 201 and left[0] == "20260101-000000-0000" and left[1] == "20260101-000000-0005"
@@ -193,3 +199,16 @@ def test_list_filters_by_repo(home):
     assert [r["id"] for r in runs.list_runs()] == [rb, ra]
     assert [r["id"] for r in runs.list_runs(a)] == [ra]
     assert [r["id"] for r in runs.list_runs(limit=1)] == [rb]
+
+
+def test_image_step_docker_argv():
+    """Pure unit test, no home/worker involved: pins the argv command() builds for an image: step."""
+    p = pipeline.Pipeline("ci.yml", [], image="node:24", secrets=["NPM_TOKEN", "OTHER"])
+    step = pipeline.Step("build", "npm test")
+    argv, name = runs.command(p, step, Path("/work"), "20260101-000000-0000", 3)
+    assert name == "agentos-ci-20260101-000000-0000-3"
+    assert argv == ["docker", "run", "--rm", "--name", name, "-v", "/work:/w", "-w", "/w",
+                     "-e", "CI", "-e", "AGENTOS_CI_RUN", "-e", "NPM_TOKEN", "-e", "OTHER",
+                     "node:24", "bash", "-eo", "pipefail", "-c", "npm test"]
+    argv2, name2 = runs.command(pipeline.Pipeline("ci.yml", []), step, Path("/work"), "x", 0)
+    assert name2 is None and argv2 == ["bash", "-eo", "pipefail", "-c", "npm test"]

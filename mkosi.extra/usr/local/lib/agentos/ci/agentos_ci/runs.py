@@ -66,6 +66,15 @@ def max_parallel() -> int:
     return n if 1 <= n <= 16 else 2
 
 
+def kill_grace() -> int:
+    """Seconds between TERM and KILL for a step's process group. AGENTOS_CI_KILL_GRACE overrides
+    it for tests only (start() forwards it to the worker the same way as AGENTOS_CI_MAX_PARALLEL)."""
+    try:
+        return int(os.environ["AGENTOS_CI_KILL_GRACE"])
+    except (KeyError, ValueError):
+        return KILL_GRACE
+
+
 def git(*args, cwd=None, check=True) -> str:
     # GIT_DIR and friends (set when a hook calls us) must not redirect these commands.
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
@@ -99,7 +108,7 @@ def repo_root(path) -> Path:
 
 
 def resolve(path, ref) -> tuple:
-    if not isinstance(ref, str) or not REF_RE.match(ref):
+    if not isinstance(ref, str) or not REF_RE.fullmatch(ref):
         raise CIError(f"invalid ref: {ref!r}")
     repo = repo_root(path)
     commit = git("rev-parse", "--verify", "--quiet", "--end-of-options", ref + "^{commit}", cwd=repo, check=False)
@@ -116,7 +125,7 @@ def new_id() -> str:
         f.seek(0)
         last = f.read().strip()
         stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
-        n = int(last[16:], 16) + 1 if last[:15] >= stamp and ID_RE.match(last) else 0
+        n = int(last[16:], 16) + 1 if last[:15] >= stamp and ID_RE.fullmatch(last) else 0
         if last[:15] > stamp:            # clock went back: keep counting on the last stamp
             stamp = last[:15]
         if n > 0xFFFF:
@@ -129,7 +138,7 @@ def new_id() -> str:
 
 
 def run_dir(run_id) -> Path:
-    if not isinstance(run_id, str) or not ID_RE.match(run_id):
+    if not isinstance(run_id, str) or not ID_RE.fullmatch(run_id):
         raise CIError(f"invalid run id: {run_id!r}")
     d = runs_dir() / run_id
     if not (d / "run.json").is_file():
@@ -197,10 +206,14 @@ def start(path, ref="HEAD", source="cli") -> str:
     # Double fork through `_spawn`, so the worker is nobody's child here: no zombie in a long-lived
     # caller (the MCP server, the web UI), and the worker outlives the push, the CLI and the session.
     env = {"HOME": str(home()), "PATH": BASE_PATH, "LANG": "C.UTF-8"}
-    if "AGENTOS_CI_MAX_PARALLEL" in os.environ:
-        env["AGENTOS_CI_MAX_PARALLEL"] = os.environ["AGENTOS_CI_MAX_PARALLEL"]
-    subprocess.run([sys.executable, MAIN, "_spawn", run_id], env=env, cwd=str(home()),
-                   stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+    for k in ("AGENTOS_CI_MAX_PARALLEL", "AGENTOS_CI_KILL_GRACE"):
+        if k in os.environ:
+            env[k] = os.environ[k]
+    try:
+        subprocess.run([sys.executable, MAIN, "_spawn", run_id], env=env, cwd=str(home()),
+                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+    except subprocess.CalledProcessError as e:
+        raise CIError(f"failed to spawn worker for run {run_id}: {e}")
     prune()
     return run_id
 
@@ -208,7 +221,11 @@ def start(path, ref="HEAD", source="cli") -> str:
 def spawn(run_id) -> None:
     d = run_dir(run_id)
     with open(d / "worker.log", "ab") as log:
+        # SIG_IGN (unlike a handler) survives exec: closes the window between this fork and
+        # worker() installing its real handler, where a bare SIGTERM would otherwise kill the
+        # new process by default before it ever runs any of our code.
         p = subprocess.Popen([sys.executable, MAIN, "_worker", run_id], start_new_session=True,
+                             preexec_fn=lambda: signal.signal(signal.SIGTERM, signal.SIG_IGN),
                              stdin=subprocess.DEVNULL, stdout=log, stderr=log)
     (d / "pid").write_text(f"{p.pid}\n")
 
@@ -216,11 +233,11 @@ def spawn(run_id) -> None:
 def prune(keep=KEEP) -> None:
     if not runs_dir().is_dir():
         return
-    ids = sorted((p.name for p in runs_dir().iterdir() if ID_RE.match(p.name)), reverse=True)
+    ids = sorted((p.name for p in runs_dir().iterdir() if ID_RE.fullmatch(p.name)), reverse=True)
     for rid in ids[keep:]:
         try:
-            status = json.loads((runs_dir() / rid / "run.json").read_text())["status"]
-        except (OSError, ValueError, KeyError):
+            status = refresh(load(rid))["status"]
+        except (CIError, OSError, ValueError, KeyError):
             status = "error"
         if status in FINAL:
             shutil.rmtree(runs_dir() / rid, ignore_errors=True)
@@ -299,7 +316,7 @@ def run_step(argv, env, cwd, logf, deadline, stop, pgid_file) -> tuple:
             reason = stop["why"] or "timeout"
             killpg(p.pid, signal.SIGTERM)
             termed_at = t
-        elif termed_at is not None and t - termed_at > KILL_GRACE:
+        elif termed_at is not None and t - termed_at > kill_grace():
             killpg(p.pid, signal.SIGKILL)
             termed_at = float("inf")
     killpg(p.pid, signal.SIGKILL)          # whatever the step left behind in its group
@@ -370,15 +387,18 @@ def worker(run_id) -> None:
                 status = "cancelled" if reason == "cancelled" else "failed"
             save(run)
         finish(run, status)
-    except CIError as e:
+    except Exception as e:
+        # Anything unexpected (docker missing for an image: step, a bug) ends the run as "error"
+        # instead of leaving it stuck "running" with a dead worker.
         run["error"] = str(e)
         finish(run, "error")
     finally:
         if image and work.exists():
             # Container steps ran as root: their files in the checkout are root-owned. ponytail: clean
             # up with the run's own image instead of a --user mapping that breaks images expecting root.
-            subprocess.run(["docker", "run", "--rm", "-v", f"{work}:/w", image, "find", "/w", "-mindepth", "1", "-delete"],
-                           capture_output=True)
+            # --entrypoint overrides the image's own ENTRYPOINT, so "find ..." runs instead of it.
+            subprocess.run(["docker", "run", "--rm", "--entrypoint", "find", "-v", f"{work}:/w", image,
+                           "/w", "-mindepth", "1", "-delete"], capture_output=True)
         shutil.rmtree(work, ignore_errors=True)
 
 
@@ -391,7 +411,7 @@ def list_runs(repo=None, limit=20) -> list:
     if not runs_dir().is_dir():
         return []
     out = []
-    for rid in sorted((p.name for p in runs_dir().iterdir() if ID_RE.match(p.name)), reverse=True):
+    for rid in sorted((p.name for p in runs_dir().iterdir() if ID_RE.fullmatch(p.name)), reverse=True):
         try:
             run = refresh(load(rid))
         except (CIError, OSError, ValueError):
@@ -408,12 +428,14 @@ def cancel(run_id) -> dict:
     if run["status"] in FINAL:
         return run
     d = run_dir(run_id)
-    pid = read_int(d / "pid")
-    if alive(pid):
-        os.kill(pid, signal.SIGTERM)       # the worker TERMs its step's group, KILLs it 10 s later
-    deadline = time.monotonic() + KILL_GRACE + 5
+    deadline = time.monotonic() + kill_grace() + 5
     while time.monotonic() < deadline:
-        run = load(run_id)
+        pid = read_int(d / "pid")
+        if alive(pid):
+            # Resent every poll: while queued, the worker ignores SIGTERM until it installs its
+            # own handler (see spawn()), so a single early TERM can be dropped, not just delayed.
+            os.kill(pid, signal.SIGTERM)   # the worker TERMs its step's group, KILLs it 10 s later
+        run = refresh(load(run_id))        # a dead worker is detected immediately, not after the full wait
         if run["status"] in FINAL:
             return run
         time.sleep(0.2)

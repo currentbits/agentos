@@ -41,6 +41,8 @@ class Pipeline:
 
 
 def parse_timeout(value) -> int:
+    if not isinstance(value, (int, str)):
+        raise ConfigError(f"timeout must look like 90s, 30m or 2h, not {value!r}")
     m = re.fullmatch(r"(\d{1,6})([smh]?)", str(value).strip())
     if not m:
         raise ConfigError(f"timeout must look like 90s, 30m or 2h, not {value!r}")
@@ -61,10 +63,10 @@ def parse_ci_yml(text: str) -> Pipeline:
     if unknown:
         raise ConfigError(f".agentos/ci.yml: unknown keys: {', '.join(unknown)}")
     image = d.get("image")
-    if image is not None and not (isinstance(image, str) and IMAGE_RE.match(image)):
+    if image is not None and not (isinstance(image, str) and IMAGE_RE.fullmatch(image)):
         raise ConfigError(f"image: not a Docker image reference: {image!r}")
     secrets = d.get("secrets") or []
-    if not isinstance(secrets, list) or not all(isinstance(s, str) and SECRET_RE.match(s) for s in secrets):
+    if not isinstance(secrets, list) or not all(isinstance(s, str) and SECRET_RE.fullmatch(s) for s in secrets):
         raise ConfigError("secrets: must be a list of names such as NPM_TOKEN")
     raw = d.get("steps")
     if not isinstance(raw, list) or not raw:
@@ -74,7 +76,7 @@ def parse_ci_yml(text: str) -> Pipeline:
         if not isinstance(s, dict) or set(s) - {"name", "run"} or not isinstance(s.get("run"), str) or not s["run"].strip():
             raise ConfigError(f"step {i}: needs run: (a string) and optionally name:")
         name = s.get("name", f"step-{i}")
-        if not isinstance(name, str) or not STEP_RE.match(name) or name in seen:
+        if not isinstance(name, str) or not STEP_RE.fullmatch(name) or name in seen:
             raise ConfigError(f"step {i}: name must match [A-Za-z0-9][A-Za-z0-9_.-]{{0,63}} and be unique")
         seen.add(name)
         steps.append(Step(name, s["run"]))
