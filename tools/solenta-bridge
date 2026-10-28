@@ -50,11 +50,15 @@ boxes() { [ -f "$CONF" ] && grep -E "$BOX_RE" "$CONF" || true; }
 
 # xml_escape STR: STR with &, < and > replaced by their XML entities, for embedding paths (from
 # $HOME, which may itself contain any of those characters) in the plist's <string> values.
+# The replacement strings are quoted ("&lt;", not &lt;): bash 5.2's patsub_replacement shopt (on
+# by default) treats an unquoted "&" in a ${s//pat/rep} replacement as "the matched text", so
+# ${s//</&lt;} would expand to "<lt;" instead of "&lt;". Quoting suppresses that on bash 5.x and
+# is a no-op on bash 3.2 (macOS), which has no such special-casing to begin with.
 xml_escape() {
   local s=$1
-  s=${s//&/&amp;}
-  s=${s//</&lt;}
-  s=${s//>/&gt;}
+  s=${s//&/"&amp;"}
+  s=${s//</"&lt;"}
+  s=${s//>/"&gt;"}
   printf '%s' "$s"
 }
 

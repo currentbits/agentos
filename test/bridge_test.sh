@@ -54,10 +54,16 @@ bash "$B" uninstall >/dev/null
 [ ! -e "$COPY" ] || fail "uninstall left the stable copy behind"
 
 # A $HOME containing XML-special characters must not corrupt the plist: install escapes & < >.
-d2="$d/ho&me"; mkdir -p "$d2"
+# All three in one path: on bash 5.2's patsub_replacement (default on), an unquoted "&" in a
+# ${s//pat/rep} replacement means "the matched text", so ${s//</&lt;} silently becomes "<lt;"
+# instead of "&lt;" (the "&" and ">" substitutions happen to come out right by coincidence, so a
+# HOME with only "&" would not have caught this).
+d2="$d/ho&m<e>x"; mkdir -p "$d2"
 HOME=$d2 SOLENTA_BRIDGE_CONF=$d/amp-conf SOLENTA_BRIDGE_PLIST=$d/la/amp.plist \
   bash "$B" install agent@box1.ts.net >/dev/null
 grep -q '&amp;' "$d/la/amp.plist" || fail "HOME's & not escaped in plist"
+grep -q '&lt;' "$d/la/amp.plist" || fail "HOME's < not escaped in plist"
+grep -q '&gt;' "$d/la/amp.plist" || fail "HOME's > not escaped in plist"
 if command -v plutil >/dev/null 2>&1; then
   plutil -lint "$d/la/amp.plist" >/dev/null || fail "plutil -lint rejected the escaped plist"
 fi
