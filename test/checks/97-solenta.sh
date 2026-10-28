@@ -9,11 +9,6 @@ check_solenta_libs_installed() {
   # shellcheck disable=SC2086 # word-split the list on purpose
   test "$(vm "dpkg-query -W -f '\${db:Status-Status}\n' $(echo $SOLENTA_LIBS) | grep -cx installed")" = 23
 }
-check_solenta_xvfb_installed() {
-  # Electron 35 SIGSEGVs creating its BrowserWindow with no X display (verified with gdb); Xvfb
-  # gives agentos-solenta-xvfb.service one.
-  test "$(vm "dpkg-query -W -f '\${db:Status-Status}\n' xvfb xauth | grep -cx installed")" = 2
-}
 check_solenta_units_idle_without_install() {
   # Guest-side proof first: the units exist and are enabled; then, with no ~/solenta, inactive.
   vm 'systemctl is-enabled --quiet agentos-solenta.path && systemctl is-enabled --quiet agentos-solenta.service &&
@@ -39,9 +34,6 @@ check_solenta_stub_survives_logout_and_pkill() {
   solenta_install_stub &&
   vm 'for _ in $(seq 1 30); do curl -s -o /dev/null -m 2 http://127.0.0.1:4620/ && exit 0; sleep 1; done; exit 1' &&
   pid1=$(vm 'systemctl show agentos-solenta.service -p MainPID --value') && test "$pid1" -gt 0 &&
-  # Xvfb is up and the service's environment carries the display it needs.
-  vm 'systemctl is-active --quiet agentos-solenta-xvfb.service' &&
-  vm 'systemctl show agentos-solenta.service -p Environment --value | grep -qw DISPLAY=:99' &&
   # A new SSH session (the last one has logged out): the same process still serves.
   test "$(vm 'systemctl show agentos-solenta.service -p MainPID --value')" = "$pid1" &&
   vm 'curl -s -o /dev/null -m 2 http://127.0.0.1:4620/ && ps -o args= -p "$(systemctl show agentos-solenta.service -p MainPID --value)" | grep -q "^/bin/bash /home/agent/solenta/solenta --headless --serve-web=4620 --no-sandbox$"' &&
@@ -58,6 +50,33 @@ check_solenta_upgrade_rename_restarts() {
   # An upgrade renames a new ~/solenta into place: the .path unit (PathChanged) starts the service.
   local rc=0
   vm 'sudo systemctl stop agentos-solenta.service' && solenta_install_stub &&
+  vm 'for _ in $(seq 1 30); do systemctl is-active --quiet agentos-solenta.service && exit 0; sleep 1; done; exit 1' || rc=1
+  solenta_cleanup
+  return "$rc"
+}
+CRASH_STUB='#!/bin/bash
+exit 1'
+solenta_install_crash_stub() {
+  vm "rm -rf ~/.solenta-new ~/solenta && mkdir -p ~/.solenta-new/pkg && printf '%s\n' '$CRASH_STUB' > ~/.solenta-new/pkg/solenta &&
+      chmod +x ~/.solenta-new/pkg/solenta && mv ~/.solenta-new/pkg ~/solenta && rm -rf ~/.solenta-new"
+}
+check_solenta_backoff_recovers_without_resetfailed() {
+  # A crashing build must keep retrying, never land in a terminal "failed" state: StartLimitIntervalSec=0
+  # means no reset-failed is ever needed, so a later upgrade's PathChanged can always restart it
+  # straight away. RestartSteps/RestartMaxDelaySec do back off on this systemd (257): verified by hand
+  # with a throwaway /bin/false unit outside the image -- NRestarts grows roughly every 5s, then 10s,
+  # then 20s, confirming the ramp -- so a count of restarts in a short window isn't a stable
+  # assertion. Check only what the growing delay can't break: never "failed", and a rename-triggered
+  # upgrade (the .path unit, not this check) brings it back without any reset-failed call.
+  local rc=0
+  vm 'sudo systemctl stop agentos-solenta.service' &&
+  solenta_install_crash_stub &&
+  vm 'sudo systemctl start agentos-solenta.service' &&
+  vm 'for _ in $(seq 1 15); do
+        test "$(systemctl show agentos-solenta.service -p ActiveState --value)" != failed || exit 1
+        sleep 1
+      done' || rc=1
+  solenta_install_stub &&
   vm 'for _ in $(seq 1 30); do systemctl is-active --quiet agentos-solenta.service && exit 0; sleep 1; done; exit 1' || rc=1
   solenta_cleanup
   return "$rc"
@@ -87,11 +106,13 @@ check_solenta_setting_off_and_on() {
 check_solenta_real_tarball() {
   # Optional: the real Linux build, installed by the same steps remoteConnections.js runs, answers
   # on 4620 under the unit. Needs GitHub; SKIP offline.
+  # Pinned to v0.27.0: 0.26.0's Linux build always creates a BrowserWindow, even under --headless,
+  # and Electron 35 SIGSEGVs creating that window with no X display -- AgentOS requires >= 0.27.
   local url sha
   vm 'curl -s -o /dev/null -m 10 https://api.github.com' || { echo "SKIP: no network to api.github.com"; return 0; }
-  read -r url sha < <(vm 'curl -fsS -m 20 https://api.github.com/repos/currentbits/solenta/releases/tags/v0.26.0 |
+  read -r url sha < <(vm 'curl -fsS -m 20 https://api.github.com/repos/currentbits/solenta/releases/tags/v0.27.0 |
     jq -r ".assets[] | select(.name | test(\"linux-x64\")) | \"\(.browser_download_url) \(.digest | ltrimstr(\"sha256:\"))\""') ||
-    { echo "SKIP: no v0.26.0 linux-x64 release asset"; return 0; }
+    { echo "SKIP: no v0.27.0 linux-x64 release asset"; return 0; }
   local rc=0
   vm "rm -rf ~/.solenta-new && mkdir -p ~/.solenta-new && curl -fsSL -o ~/.solenta-download.tar.gz '$url' &&
       test \"\$(sha256sum ~/.solenta-download.tar.gz | cut -d ' ' -f 1)\" = '$sha' &&
@@ -102,7 +123,7 @@ check_solenta_real_tarball() {
   # Task 3 adds solenta-pair; until then, only check it if it's there, so this still passes today
   # on the web-token assertion alone.
   vm 'test -s ~/.config/Solenta/web-token && { test ! -e /usr/local/lib/agentos/solenta-pair ||
-      /usr/local/lib/agentos/solenta-pair status | jq -e ".modeA.version == \"0.26.0\" and .modeA.webToken"; }' >/dev/null || rc=1
+      /usr/local/lib/agentos/solenta-pair status | jq -e ".modeA.version == \"0.27.0\" and .modeA.webToken"; }' >/dev/null || rc=1
   vm 'sudo systemctl stop agentos-solenta.service; rm -rf ~/solenta ~/.solenta-new ~/.config/Solenta ~/.solenta-headless.log'
   return "$rc"
 }
