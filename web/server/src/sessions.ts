@@ -90,6 +90,21 @@ export async function listSessions(deps: Deps): Promise<Session[]> {
 
 export interface CreateBody { cli?: string; dir?: string; repo?: string; name?: string }
 
+// Clone an allowlisted git URL into ~/work/<name> ("--": the URL is never an option). Shared by
+// new sessions and the Solenta card. Returns the checkout's real path.
+export async function cloneRepo(deps: Deps, repo: string, name: string, login: string): Promise<string> {
+  if (!REPO_RE.test(repo)) throw new HttpError(400, 'repo must be an https://, ssh:// or git@ URL', 'repo');
+  if (!NAME_RE.test(name)) throw new HttpError(400, 'name must match [a-z0-9-]{1,32}', 'name');
+  const dest = join(deps.home, 'work', name);
+  await mkdir(dirname(dest), { recursive: true });
+  const r = await deps.run(['git', 'clone', '--', repo, dest], {
+    timeoutMs: 300_000, env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: 'ssh -o BatchMode=yes' },
+  });
+  if (r.code !== 0) throw new HttpError(400, `git clone failed: ${r.stderr.trim()}`);
+  deps.audit(login, 'repo-clone', dest);
+  return resolveDir(dest, deps.home);
+}
+
 export async function createSession(deps: Deps, body: CreateBody, login: string): Promise<Session> {
   const cli = body.cli as Cli;
   if (!CLIS.includes(cli)) throw new HttpError(400, `cli must be one of ${CLIS.join(', ')}`);
@@ -102,15 +117,7 @@ export async function createSession(deps: Deps, body: CreateBody, login: string)
 
   let dir: string;
   if (body.repo) {
-    if (!REPO_RE.test(body.repo)) throw new HttpError(400, 'repo must be an https://, ssh:// or git@ URL');
-    const dest = join(deps.home, 'work', name);
-    await mkdir(dirname(dest), { recursive: true });
-    const r = await deps.run(['git', 'clone', '--', body.repo, dest], {
-      timeoutMs: 300_000, env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: 'ssh -o BatchMode=yes' },
-    });
-    if (r.code !== 0) throw new HttpError(400, `git clone failed: ${r.stderr.trim()}`);
-    deps.audit(login, 'repo-clone', dest);
-    dir = await resolveDir(dest, deps.home);
+    dir = await cloneRepo(deps, body.repo, name, login);
   } else {
     dir = await resolveDir(body.dir || deps.home, deps.home);
   }

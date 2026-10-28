@@ -8,6 +8,8 @@ export const UNIT_RE = /^(agentos-[a-z0-9@-]+|docker|tailscaled)\.service$/;
 export const FINGERPRINT_RE = /^SHA256:[A-Za-z0-9+/]{43}$/;
 export const GITHUB_USER_RE = /^[A-Za-z0-9-]{1,39}$/;
 export const DESKTOP_RE = /^([1-9]|1[0-6])$/;
+export const SOLENTA_PAIR = '/usr/local/lib/agentos/solenta-pair';
+const ABS_PATH_RE = /^\/[^\0\n]*$/;
 
 export type Action =
   | { name: 'config-set'; key: string }            // value goes on stdin, never in argv (sudo logs argv)
@@ -22,7 +24,8 @@ export type Action =
   | { name: 'reboot' }
   | { name: 'poweroff' }
   | { name: 'desktop-start'; n: number }
-  | { name: 'desktop-stop'; n: number };
+  | { name: 'desktop-stop'; n: number }
+  | { name: 'solenta-status'; path?: string };          // runs as agent (this service's user): no sudo
 
 function need(ok: boolean, what: string): void {
   if (!ok) throw new HttpError(400, `invalid ${what}`);
@@ -44,6 +47,8 @@ export function argv(a: Action): string[] {
     case 'poweroff': return [...sudo, 'systemctl', 'poweroff'];
     case 'desktop-start': need(DESKTOP_RE.test(String(a.n)), 'desktop'); return ['systemctl', '--no-ask-password', 'start', `agentos-desktop@${a.n}.service`];
     case 'desktop-stop': need(DESKTOP_RE.test(String(a.n)), 'desktop'); return ['systemctl', '--no-ask-password', 'stop', `agentos-desktop@${a.n}.service`];
+    case 'solenta-status': if (a.path !== undefined) need(ABS_PATH_RE.test(a.path), 'path');
+      return [SOLENTA_PAIR, 'status', ...(a.path ? ['--', a.path] : [])];
   }
 }
 

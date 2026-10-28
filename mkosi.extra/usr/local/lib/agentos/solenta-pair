@@ -1,0 +1,76 @@
+#!/bin/bash
+# Solenta pairing facts, for the web UI's Solenta card and `agentos-config solenta`. Runs as agent.
+#   solenta-pair status [-- PATH]   JSON: host, remoteHost, Tailscale SSH, host key fingerprints,
+#                                   the Mac's ssh-keyscan line, Mode A state, preflight (for PATH)
+#   solenta-pair clone URL NAME     git clone URL into ~/work/NAME (https://, ssh:// or git@ only)
+# Never prints a secret: Solenta's web token is only tested for existence.
+set -euo pipefail
+H=${HOME:-/home/agent}
+SSH_DIR=${AGENTOS_SSH_DIR:-/etc/ssh}
+WRAPPER=${AGENTOS_WRAPPER:-/usr/local/lib/agentos/cli-wrapper}
+PF_PATH=${AGENTOS_PREFLIGHT_PATH:-/usr/local/bin:/usr/bin:/bin}
+REPO_RE='^(https://[^[:space:]]+|git@[^[:space:]:]+:[^[:space:]]+|ssh://[^[:space:]]+)$'
+
+item() { jq -cn --arg item "$1" --argjson ok "$2" --arg detail "$3" '{item: $item, ok: $ok, detail: $detail}'; }
+
+# Solenta's remote command line, reproduced: non-login, non-interactive, nothing but HOME and PATH.
+preflight() {
+  local c out
+  for c in git bash node claude codex opencode grok; do
+    # shellcheck disable=SC2016 # $1/$2 expand in the inner shell
+    if out=$(env -i HOME="$H" PATH="$PF_PATH" AGENTOS_WHICH=1 bash -c '
+        p=$(command -v "$1") || { echo "not on PATH"; exit 1; }
+        if [ "$(readlink -f "$p")" = "$2" ]; then "$1"; else echo "$p"; fi' _ "$c" "$WRAPPER" 2>&1); then
+      item "$c" true "$out"
+    else
+      item "$c" false "$out"
+    fi
+  done
+  if mkdir -p "$H/.solenta" 2>/dev/null && [ -w "$H/.solenta" ]; then item ".solenta writable" true "$H/.solenta"
+  else item ".solenta writable" false "$H/.solenta is not writable"; fi
+  if [ -n "${1:-}" ]; then
+    if out=$(env -i HOME="$H" PATH="$PF_PATH" git -C "$1" rev-parse --show-toplevel 2>&1); then item "git checkout" true "$out"
+    else item "git checkout" false "$out"; fi
+  fi
+}
+
+status() {
+  local path=${1:-} ts dns ip host tsssh keys ver token
+  ts=$("${TAILSCALE:-tailscale}" status --json 2>/dev/null) || ts='{}'
+  dns=$(jq -r '.Self.DNSName // "" | rtrimstr(".")' <<< "$ts" 2>/dev/null) || dns=
+  ip=$(jq -r '.Self.TailscaleIPs[0] // ""' <<< "$ts" 2>/dev/null) || ip=
+  host=${dns:-${ip:-$(hostname)}}
+  # tailscaled lists SSH host keys for a node only while Tailscale SSH serves it.
+  tsssh=$(jq '(.Self.sshHostKeys // .Self.SSH_HostKeys // []) | length > 0' <<< "$ts" 2>/dev/null) || tsssh=false
+  keys=$(for f in "$SSH_DIR"/ssh_host_*_key.pub; do
+           [ -r "$f" ] || continue
+           read -r t _ < "$f"
+           jq -cn --arg type "$t" --arg fp "$(ssh-keygen -l -f "$f" | awk '{print $2}')" '{type: $type, fingerprint: $fp}'
+         done | jq -cs .)
+  ver=$(jq -r '.version // ""' "$H/solenta/resources/app/package.json" 2>/dev/null) || ver=
+  token=false; [ -f "${XDG_CONFIG_HOME:-$H/.config}/Solenta/web-token" ] && token=true
+  jq -n --arg host "$host" --argjson tsssh "$tsssh" --argjson keys "$keys" --arg path "$path" \
+        --arg enabled "$(systemctl is-enabled agentos-solenta.path 2>/dev/null || true)" \
+        --arg service "$(systemctl is-active agentos-solenta.service 2>/dev/null || true)" \
+        --arg ver "$ver" --argjson token "$token" --argjson preflight "$(preflight "$path" | jq -cs .)" '{
+      host: $host,
+      remoteHost: "agent@\($host)",
+      remotePath: (if $path == "" then null else $path end),
+      tailscaleSsh: $tsssh,
+      hostKeys: $keys,
+      keyscan: "ssh-keyscan -t ed25519 \($host) >> ~/.ssh/known_hosts",
+      modeA: {enabled: ($enabled == "enabled"), service: $service, version: (if $ver == "" then null else $ver end), webToken: $token},
+      preflight: $preflight
+    }'
+}
+
+case "${1:-}" in
+  status) shift; [ "${1:-}" = -- ] && shift; status "${1:-}" ;;
+  clone)  [ $# -eq 3 ] || { echo "usage: solenta-pair clone URL NAME" >&2; exit 2; }
+          [[ $2 =~ $REPO_RE ]] || { echo "repo must be an https://, ssh:// or git@ URL" >&2; exit 2; }
+          [[ $3 =~ ^[a-z0-9-]{1,32}$ ]] || { echo "name must match [a-z0-9-]{1,32}" >&2; exit 2; }
+          mkdir -p "$H/work"
+          GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND='ssh -o BatchMode=yes' git clone -- "$2" "$H/work/$3"
+          echo "$H/work/$3" ;;
+  *)      sed -n 3,6p "$0" >&2; exit 2 ;;
+esac

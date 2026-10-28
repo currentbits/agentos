@@ -120,10 +120,8 @@ check_solenta_real_tarball() {
       for d in ~/.solenta-new/*/; do [ -x \"\$d/solenta\" ] && src=\${d%/}; done && rm -rf ~/solenta && mv \"\$src\" ~/solenta &&
       test -z \"\$(ldd ~/solenta/solenta | grep 'not found')\" &&
       for _ in \$(seq 1 90); do curl -s -o /dev/null -m 2 http://127.0.0.1:4620/ && exit 0; sleep 1; done; exit 1" || rc=1
-  # Task 3 adds solenta-pair; until then, only check it if it's there, so this still passes today
-  # on the web-token assertion alone.
-  vm 'test -s ~/.config/Solenta/web-token && { test ! -e /usr/local/lib/agentos/solenta-pair ||
-      /usr/local/lib/agentos/solenta-pair status | jq -e ".modeA.version == \"0.27.0\" and .modeA.webToken"; }' >/dev/null || rc=1
+  vm 'test -s ~/.config/Solenta/web-token &&
+      /usr/local/lib/agentos/solenta-pair status | jq -e ".modeA.version == \"0.27.0\" and .modeA.webToken"' >/dev/null || rc=1
   vm 'sudo systemctl stop agentos-solenta.service; rm -rf ~/solenta ~/.solenta-new ~/.config/Solenta ~/.solenta-headless.log'
   return "$rc"
 }

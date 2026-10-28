@@ -50,6 +50,29 @@ cmd_github_keys() {
   [ -n "$keys" ] || { echo "no public keys for GitHub user $1" >&2; exit 1; }
   while IFS= read -r k; do cmd_add_ssh_key "$k"; done <<< "$keys"
 }
+# Solenta pairing (the same facts as the web UI's Solenta card), computed as agent by solenta-pair.
+cmd_solenta() {
+  local out
+  out=$(runuser -u agent -- env -i HOME=/home/agent PATH=/usr/local/bin:/usr/bin:/bin \
+          /usr/local/lib/agentos/solenta-pair status ${1:+-- "$1"}) || exit 1
+  # shellcheck disable=SC2016 # jq program, not shell
+  jq -r '
+    "Solenta and \(.host)",
+    "",
+    "Mode A (recommended): in Solenta, Settings > Connections > Remote Connections, add \(.remoteHost).",
+    "  agentos-solenta: \(.modeA.service) (\(if .modeA.enabled then "enabled" else "disabled: AGENTOS_SOLENTA=0" end)), Solenta \(.modeA.version // "not installed yet"), web token \(if .modeA.webToken then "present" else "absent" end)",
+    "",
+    "1. SSH access: " + (if .tailscaleSsh then "Tailscale SSH is on; your tailnet policy decides who may connect."
+                         else "add the Mac'"'"'s public key: sudo agentos-config add-ssh-key \"ssh-ed25519 AAAA... you@mac\"" end),
+    "   Host key fingerprints: compare them with what ssh shows on the Mac, then add the key there:",
+    (.hostKeys[] | "     \(.type) \(.fingerprint)"),
+    "     \(.keyscan)",
+    "2. Repo: sudo agentos-config solenta clone <git URL> <name>, or use any checkout under /home/agent.",
+    "3. Mode B values for the Solenta project: remoteHost = \(.remoteHost), remotePath = \(.remotePath // "/home/agent/work/<name>")",
+    "4. Preflight (as Solenta runs commands: non-login, non-interactive):",
+    (.preflight[] | "   \(if .ok then "PASS" else "FAIL" end)  \(.item): \(.detail)")' <<< "$out"
+}
+
 # Run as its own unit: firstboot ends with agentos-console-apply, which restarts getty@tty1 and
 # would kill a menu running there (agentos-config-tty) if firstboot ran inside it.
 cmd_apply() { systemctl restart agentos-firstboot.service; }
@@ -73,6 +96,7 @@ menu() {
       reboot    "Auto-reboot for kernel security updates" \
       webui     "Web UI: tailnet logins allowed to use it" \
       mcptoken  "Show MCP HTTP bearer token" \
+      solenta   "Solenta: pairing values and preflight" \
       done      "Apply and exit" 3>&1 1>&2 2>&3) || c=done
     case $c in
       password)  passwd agent || true ;;
@@ -97,6 +121,7 @@ menu() {
                  i=$(whiptail --inputbox "Stop an idle, unwatched desktop after this many minutes (0 = never, default 120)" 10 60 "$(cmd_get AGENTOS_DESKTOP_IDLE_MINUTES || true)" 3>&1 1>&2 2>&3) && [ -n "$i" ] && menu_set AGENTOS_DESKTOP_IDLE_MINUTES "$i" || true ;;
       reboot)    if whiptail --yesno "Reboot automatically at 04:00 when a kernel update requires it?" 8 70; then cmd_set AGENTOS_AUTO_REBOOT 1; else cmd_set AGENTOS_AUTO_REBOOT 0; fi ;;
       webui)     u=$(whiptail --inputbox "Tailnet logins allowed to use the web UI, comma-separated (you@example.com). Empty = nobody." 10 72 "$(cmd_get AGENTOS_WEB_USERS || true)" 3>&1 1>&2 2>&3) && menu_set AGENTOS_WEB_USERS "$u" || true ;;
+      solenta)   whiptail --scrolltext --title Solenta --msgbox "$(cmd_solenta 2>&1)" 24 76 ;;
       mcptoken)  whiptail --msgbox "$(cat /etc/agentos/mcp-token)\n\nThis token (and any view_url built from it) gives full control of the desktops: treat it like a root password." 11 72 ;;
       done)      cmd_apply || whiptail --msgbox "Some settings failed to apply (see: journalctl -u agentos-firstboot). Tailscale key wrong?" 9 72
                  return ;;
@@ -116,5 +141,12 @@ case "${1:-}" in
   password)        passwd agent ;;
   apply)           cmd_apply ;;
   show-mcp-token)  cat /etc/agentos/mcp-token ;;
-  *)               echo "usage: agentos-config [set KEY VALUE|-|get KEY|add-ssh-key KEY|-|remove-ssh-key FINGERPRINT|github-keys USER|password|apply|show-mcp-token]" >&2; exit 2 ;;
+  solenta)         if [ "${2:-}" = clone ]; then
+                     [ $# -eq 4 ] || { echo "usage: agentos-config solenta clone URL NAME" >&2; exit 2; }
+                     runuser -u agent -- env -i HOME=/home/agent PATH=/usr/local/bin:/usr/bin:/bin \
+                       /usr/local/lib/agentos/solenta-pair clone "$3" "$4"
+                   else
+                     cmd_solenta "${2:-}"
+                   fi ;;
+  *)               echo "usage: agentos-config [set KEY VALUE|-|get KEY|add-ssh-key KEY|-|remove-ssh-key FINGERPRINT|github-keys USER|password|apply|show-mcp-token|solenta [PATH]|solenta clone URL NAME]" >&2; exit 2 ;;
 esac
