@@ -25,6 +25,7 @@ export interface Deps {
   uiRoot: string | null;
   novncRoot: string | null;
   vncTokenDir: string;
+  bridgePath: string;     // tools/solenta-bridge, served for download by the Solenta card
 }
 
 export function cachedTailnetName(run: Runner, ttlMs = 60_000): () => Promise<string | null> {
@@ -53,6 +54,7 @@ export function defaultDeps(): Deps {
     uiRoot: '/usr/local/lib/agentos/web/ui',
     novncRoot: '/usr/share/novnc',
     vncTokenDir: TOKEN_DIR,
+    bridgePath: '/usr/local/share/agentos/solenta-bridge',
   };
 }
 

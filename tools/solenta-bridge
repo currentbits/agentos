@@ -1,0 +1,122 @@
+#!/bin/bash
+# solenta-bridge (runs on the Mac, Mode B only): makes Solenta's MCP servers (coder-threads,
+# coder-memory) reachable on each paired AgentOS box's loopback, through `ssh -R`.
+#
+#   solenta-bridge install user@box...   save the boxes, install and start the launchd agent
+#   solenta-bridge uninstall              stop and remove the launchd agent
+#   solenta-bridge run                    the loop launchd runs: one tunnel per box, kept open
+#   solenta-bridge ports                  print the two ports it would forward
+#
+# It reads ONLY the "port" fields of Solenta's orch-server.json and memory-server.json: the bearer
+# tokens in those files are never read into this script, printed or sent anywhere. The box still
+# needs that token, which Solenta hands to the agents it runs there.
+# macOS ships bash 3.2: no associative arrays, mapfile or ${x,,} here.
+set -euo pipefail
+SOLENTA_DIR=${SOLENTA_DIR:-"$HOME/Library/Application Support/Solenta"}
+CONF=${SOLENTA_BRIDGE_CONF:-"$HOME/.config/agentos/solenta-bridge.conf"}
+PLIST=${SOLENTA_BRIDGE_PLIST:-"$HOME/Library/LaunchAgents/os.agent.solenta-bridge.plist"}
+LABEL=os.agent.solenta-bridge
+LAUNCHCTL=${LAUNCHCTL:-launchctl}
+BOX_RE='^[A-Za-z0-9][A-Za-z0-9._-]*@[A-Za-z0-9][A-Za-z0-9.:_-]*$'   # never starts with "-"
+
+# port_of FILE: the number in the file's top-level "port" field, else nothing. grep -o prints only
+# the matched `"port": N` text, so no other byte of the file (the token) reaches this shell.
+port_of() {
+  local p
+  p=$(grep -oE '"port"[[:space:]]*:[[:space:]]*[0-9]{1,5}' "$1" 2>/dev/null | head -n 1 | grep -oE '[0-9]+$') || return 0
+  if [ -n "$p" ] && [ "$p" -ge 1 ] && [ "$p" -le 65535 ]; then echo "$p"; fi
+}
+
+ports() {
+  local f
+  for f in orch-server.json memory-server.json; do port_of "$SOLENTA_DIR/$f"; done
+}
+
+# ssh_argv BOX PORT...: the tunnel command, one word per line.
+ssh_argv() {
+  local box=$1 p; shift
+  printf '%s\n' ssh -N -T -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3
+  for p in "$@"; do printf '%s\n' -R "127.0.0.1:$p:127.0.0.1:$p"; done
+  printf '%s\n' -- "$box"
+}
+
+mtime() { date -r "$1" +%s 2>/dev/null || echo 0; }
+stamp() { echo "$(ports | tr '\n' ' ')$(mtime "$CONF")"; }
+boxes() { [ -f "$CONF" ] && grep -E "$BOX_RE" "$CONF" || true; }
+
+# One tunnel per box, each restarted with backoff (1 s doubling to 60 s) when it drops. When the
+# ports or the box list change, every tunnel is restarted with the new values.
+run() {
+  local pids=() box st
+  # ${pids[@]+...}: bash 3.2 treats an empty array as unset under set -u.
+  trap 'kill ${pids[@]+"${pids[@]}"} 2>/dev/null; exit 0' TERM INT
+  while true; do
+    st=$(stamp)
+    local ps; ps=$(ports | tr '\n' ' ')
+    if [ -z "$ps" ]; then echo "solenta-bridge: Solenta is not running (no ports in $SOLENTA_DIR); waiting" >&2; fi
+    pids=()
+    if [ -n "$ps" ]; then
+      for box in $(boxes); do
+        # shellcheck disable=SC2086 # $ps is a list of validated port numbers
+        ( delay=1
+          while true; do
+            argv=(); while IFS= read -r w; do argv+=("$w"); done < <(ssh_argv "$box" $ps)
+            start=$(date +%s)
+            "${argv[@]}" || true
+            [ $(( $(date +%s) - start )) -ge 60 ] && delay=1
+            echo "solenta-bridge: tunnel to $box dropped; retrying in ${delay}s" >&2
+            sleep "$delay"; delay=$(( delay * 2 > 60 ? 60 : delay * 2 ))
+          done ) &
+        pids+=($!)
+      done
+    fi
+    while [ "$(stamp)" = "$st" ]; do sleep 5; done
+    echo "solenta-bridge: Solenta ports or boxes changed; reconnecting" >&2
+    if [ ${#pids[@]} -gt 0 ]; then pkill -P "$(echo "${pids[@]}" | tr ' ' ',')" 2>/dev/null || true; kill "${pids[@]}" 2>/dev/null || true; fi
+  done
+}
+
+install_agent() {
+  local b self
+  [ $# -gt 0 ] || { echo "usage: solenta-bridge install user@box..." >&2; exit 2; }
+  for b in "$@"; do [[ $b =~ $BOX_RE ]] || { echo "not user@host: $b" >&2; exit 2; }; done
+  mkdir -p "$(dirname "$CONF")" "$(dirname "$PLIST")"
+  printf '%s\n' "$@" > "$CONF"
+  self=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
+  cat > "$PLIST" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$LABEL</string>
+  <key>ProgramArguments</key><array><string>/bin/bash</string><string>$self</string><string>run</string></array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardErrorPath</key><string>$HOME/Library/Logs/solenta-bridge.log</string>
+</dict>
+</plist>
+PLIST
+  "$LAUNCHCTL" bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
+  "$LAUNCHCTL" bootstrap "gui/$(id -u)" "$PLIST"
+  echo "solenta-bridge: forwarding Solenta's MCP ports to: $*"
+  echo "Log: ~/Library/Logs/solenta-bridge.log"
+}
+
+uninstall_agent() {
+  "$LAUNCHCTL" bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
+  rm -f "$PLIST"
+  echo "solenta-bridge: removed (kept $CONF)"
+}
+
+main() {
+  case "${1:-}" in
+    install)   shift; install_agent "$@" ;;
+    uninstall) uninstall_agent ;;
+    run)       run ;;
+    ports)     ports ;;
+    *)         sed -n 5,9p "$0" >&2; exit 2 ;;
+  esac
+}
+
+# Sourced by test/bridge_test.sh for its functions; executed otherwise.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then main "$@"; fi

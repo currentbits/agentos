@@ -1,5 +1,6 @@
-// The Solenta card: pairing facts and preflight (solenta-pair, as agent) and a repo clone through
-// the sessions code. Nothing here reads a Solenta token.
+// The Solenta card: pairing facts and preflight (solenta-pair, as agent), a repo clone through the
+// sessions code, and the Mac-side bridge script for download. Nothing here reads a Solenta token.
+import { readFile } from 'node:fs/promises';
 import type { FastifyInstance } from 'fastify';
 import { runAction } from './actions.js';
 import { HttpError } from './run.js';
@@ -15,4 +16,7 @@ export function solentaRoutes(app: FastifyInstance, deps: Deps): void {
   });
   app.post<{ Body: { repo?: string; name?: string } }>('/api/solenta/clone', async (req, reply) =>
     reply.code(201).send({ path: await cloneRepo(deps, String(req.body?.repo ?? ''), String(req.body?.name ?? ''), req.login) }));
+  app.get('/api/solenta/bridge', async (_req, reply) =>
+    reply.type('text/x-shellscript; charset=utf-8').header('Content-Disposition', 'attachment; filename="solenta-bridge"')
+      .send(await readFile(deps.bridgePath)));
 }

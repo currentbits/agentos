@@ -1,4 +1,4 @@
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
@@ -35,5 +35,14 @@ describe('solenta', () => {
     expect(r.json()).toEqual({ path: join(deps.home, 'work/app') });
     expect(calls[0].argv).toEqual(['git', 'clone', '--', 'https://example.com/a.git', join(deps.home, 'work/app')]);
     expect(audits).toEqual([`${LOGIN} repo-clone ${join(deps.home, 'work/app')}`]);
+  });
+
+  it('serves the bridge script as a download', async () => {
+    const { deps } = fakeDeps();
+    const app = await buildApp(deps);
+    const r = await app.inject({ url: '/api/solenta/bridge', headers: H });
+    expect(r.statusCode).toBe(200);
+    expect(r.headers['content-disposition']).toBe('attachment; filename="solenta-bridge"');
+    expect(r.body).toBe(readFileSync(deps.bridgePath, 'utf8'));
   });
 });

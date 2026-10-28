@@ -1,6 +1,7 @@
 import { mkdtempSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { RunOpts, RunResult } from '../src/run.js';
 import type { Deps } from '../src/app.js';
 import { parseWebConf } from '../src/auth.js';
@@ -29,6 +30,7 @@ export function fakeDeps(reply: (argv: string[], opts?: RunOpts) => Partial<RunR
     uiRoot: null,
     novncRoot: null,
     vncTokenDir: realpathSync(mkdtempSync(join(tmpdir(), 'agentos-web-vnc-'))),
+    bridgePath: fileURLToPath(new URL('../../../tools/solenta-bridge', import.meta.url)),
     ...over,
   };
   return { deps, calls, audits };
