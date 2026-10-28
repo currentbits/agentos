@@ -201,6 +201,18 @@ def test_list_filters_by_repo(home):
     assert [r["id"] for r in runs.list_runs(limit=1)] == [rb]
 
 
+def test_spawn_failure_marks_the_run_error_not_queued_forever(home, monkeypatch):
+    # A MAIN that doesn't exist makes python itself fail to spawn the worker (a nonzero exit,
+    # not an OSError here): start() must not leave the run "queued" with nothing left to ever
+    # move it out of that state.
+    monkeypatch.setattr(runs, "MAIN", str(home / "no-such-main.py"))
+    repo = make_repo(home / "r", {".agentos/ci.yml": ci_yml(("t", "true"))})
+    with pytest.raises(CIError, match="failed to spawn worker"):
+        runs.start(repo)
+    (run,) = runs.list_runs()
+    assert run["status"] == "error" and "failed to spawn worker" in run["error"]
+
+
 def test_image_step_docker_argv():
     """Pure unit test, no home/worker involved: pins the argv command() builds for an image: step."""
     p = pipeline.Pipeline("ci.yml", [], image="node:24", secrets=["NPM_TOKEN", "OTHER"])

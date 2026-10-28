@@ -213,7 +213,11 @@ def start(path, ref="HEAD", source="cli") -> str:
         subprocess.run([sys.executable, MAIN, "_spawn", run_id], env=env, cwd=str(home()),
                        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
     except subprocess.CalledProcessError as e:
-        raise CIError(f"failed to spawn worker for run {run_id}: {e}")
+        # Otherwise the run sits "queued" forever: nothing is left to ever move it out of that
+        # state once no worker was spawned for it.
+        msg = f"failed to spawn worker for run {run_id}: {e}"
+        finish({**load(run_id), "error": msg}, "error")
+        raise CIError(msg)
     prune()
     return run_id
 
@@ -430,14 +434,19 @@ def cancel(run_id) -> dict:
     d = run_dir(run_id)
     deadline = time.monotonic() + kill_grace() + 5
     while time.monotonic() < deadline:
+        # Check first, signal second: refresh() detects a worker that already exited (a dead
+        # worker is an "error", a finished one is "passed"/"failed"/...) and finalizes the run
+        # before we ever read its pid file again. Signalling first and refreshing after could
+        # send SIGTERM to a pid the OS had already reused for an unrelated process in the gap
+        # between the worker exiting and this poll noticing.
+        run = refresh(load(run_id))
+        if run["status"] in FINAL:
+            return run
         pid = read_int(d / "pid")
         if alive(pid):
             # Resent every poll: while queued, the worker ignores SIGTERM until it installs its
             # own handler (see spawn()), so a single early TERM can be dropped, not just delayed.
             os.kill(pid, signal.SIGTERM)   # the worker TERMs its step's group, KILLs it 10 s later
-        run = refresh(load(run_id))        # a dead worker is detected immediately, not after the full wait
-        if run["status"] in FINAL:
-            return run
         time.sleep(0.2)
     # The worker is stuck or gone: kill what is left and record the cancel here.
     for f in ("pgid", "pid"):
