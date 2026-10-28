@@ -10,6 +10,8 @@ Before you declare a task in a repository done, and the repository has CI (`.age
 1. Commit your work. CI runs the committed tree, never uncommitted edits.
 2. Call `ci_run(path=<repository>, ref="HEAD")`, then `ci_wait(run_id)`. If `ci_wait` comes back
    while the run is still `queued` or `running` (your client cut the call short), call it again.
+   If `ci_wait` errors or times out instead of returning, the run keeps going regardless; call
+   `ci_status` or `ci_wait` again to check on it.
 3. On `failed`: read `log_tail`, or `ci_logs(run_id, step)` for more, fix the root cause, commit,
    and run CI again.
 4. On `error`: the message says why (for example, no CI configuration found). Fix it, or tell the user.

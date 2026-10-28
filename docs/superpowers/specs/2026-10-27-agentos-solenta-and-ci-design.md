@@ -6,8 +6,8 @@ Builds on: the AgentOS base, desktops, installer and web UI specs (all merged on
 
 ## Goals
 
-1. **Solenta on AgentOS.** Solenta.app 0.26 (Nightly), unmodified, works with an AgentOS box in two modes:
-   - **Mode A, Solenta on the box (recommended).** Solenta 0.26's *Remote Connections* installs Solenta's Linux build on the box over SSH, runs it headless, and drives it from the Mac through an SSH tunnel. Agents, CLIs and Solenta's MCP servers (`coder-threads`, `coder-memory`) all run on the box, with no bridge needed.
+1. **Solenta on AgentOS.** Solenta.app 0.27 (Nightly), unmodified, works with an AgentOS box in two modes:
+   - **Mode A, Solenta on the box (recommended).** Solenta 0.27's *Remote Connections* installs Solenta's Linux build on the box over SSH, runs it headless, and drives it from the Mac through an SSH tunnel. Agents, CLIs and Solenta's MCP servers (`coder-threads`, `coder-memory`) all run on the box, with no bridge needed.
    - **Mode B, worker host.** Solenta runs on the Mac. A project's `remoteHost`/`remotePath` runs each agent CLI on the box over SSH, and a Mac-side bridge makes Solenta's MCP servers reachable from the box.
 2. **Built-in CI.** You can run CI for any repo on the box without GitHub: push to the box, or trigger from the web UI, the CLI or an agent. Agents get MCP tools and a skill that make "run CI, read the failure, fix, re-run" part of how they work.
 
@@ -17,9 +17,9 @@ Builds on: the AgentOS base, desktops, installer and web UI specs (all merged on
 - Mode B's bridge is unnecessary in Mode A, so docs and the card present Mode A first.
 - A full forge (PRs, issues). Forgejo may come later as a separate add-on.
 
-## Facts about Solenta 0.26 this design relies on
+## Facts about Solenta 0.27 this design relies on
 
-Investigated from the running app bundle (`/Applications/Solenta Nightly.app/Contents/Resources/app`, 0.26.0). Both the stable and Nightly channels share the userData dir `~/Library/Application Support/Solenta`.
+Investigated from the running app bundle (`/Applications/Solenta Nightly.app/Contents/Resources/app`, 0.27.0). Both the stable and Nightly channels share the userData dir `~/Library/Application Support/Solenta`.
 
 **Remote Connections** (`electron/remoteConnections.js`, used by Mode A):
 - Every remote script runs as `ssh -T -o BatchMode=yes -o StrictHostKeyChecking=yes … host "sh -c '…'"`: POSIX `sh`, non-interactive, non-login. It never uses sudo.
@@ -225,8 +225,17 @@ Install is idempotent and never overwrites a user-edited file. Each managed bloc
   - the MCP `ci_run` + `ci_wait` end-to-end;
   - the skill file is present for each CLI after boot;
   - the web CI API lists and streams the run.
-- **Manual:** connect a real Solenta.app 0.26 to the box through Remote Connections (Mode A), and run a thread on the box. For Mode B, pair with a real Solenta.app on the Mac; run a thread on the box; confirm that `coder-threads` and `coder-memory` work through the bridge.
+- **Manual:** connect a real Solenta.app 0.27 to the box through Remote Connections (Mode A), and run a thread on the box. For Mode B, pair with a real Solenta.app on the Mac; run a thread on the box; confirm that `coder-threads` and `coder-memory` work through the bridge.
 
 ## Out of scope (this round)
 
 Forgejo or PRs; CI result notifications (email, chat); build caches across runs; matrix builds outside `act`; Windows and macOS CI targets; running Solenta on Linux.
+
+## Amendments (2026-10-28)
+
+- **Solenta 0.27 or later is required.** 0.26.0's Linux build segfaults with no X display, even
+  under `--headless`. An Xvfb workaround (a virtual X server for the headless unit) was tried and
+  then removed: 0.27.0 fixes the underlying crash, so AgentOS runs it with no X server at all, and
+  the extra moving part bought nothing.
+- **Codex's `tool_timeout_sec` is 1900,** not 1800: `ci_wait`'s own default timeout is 1800 s, and
+  1900 gives 100 s of headroom over it so the two don't tie.

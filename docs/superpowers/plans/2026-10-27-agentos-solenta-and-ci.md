@@ -23,6 +23,7 @@
 
 Copied verbatim from the spec (`docs/superpowers/specs/2026-10-27-agentos-solenta-and-ci-design.md`). When this plan and the spec disagree, the spec wins, except for the deliberate, evidenced adjustments listed under "Spec adjustments" below.
 
+- See the spec's "Amendments (2026-10-28)" section for two corrections made after this plan was written (Solenta 0.27+ is required, not 0.26; Codex's `tool_timeout_sec` is 1900, not 1800). The rest of this plan is left as the historical record and still says 0.26/1800 throughout.
 - Solenta.app 0.26 (Nightly), unmodified, works with an AgentOS box in two modes
 - Non-goals: Changing Solenta. / A full forge (PRs, issues).
 - Mode B's bridge is unnecessary in Mode A, so docs and the card present Mode A first.
