@@ -15,15 +15,19 @@ set -euo pipefail
 SOLENTA_DIR=${SOLENTA_DIR:-"$HOME/Library/Application Support/Solenta"}
 CONF=${SOLENTA_BRIDGE_CONF:-"$HOME/.config/agentos/solenta-bridge.conf"}
 PLIST=${SOLENTA_BRIDGE_PLIST:-"$HOME/Library/LaunchAgents/os.agent.solenta-bridge.plist"}
+AGENT_COPY="$HOME/Library/Application Support/AgentOS/solenta-bridge"   # install's stable copy of self
 LABEL=os.agent.solenta-bridge
 LAUNCHCTL=${LAUNCHCTL:-launchctl}
 BOX_RE='^[A-Za-z0-9][A-Za-z0-9._-]*@[A-Za-z0-9][A-Za-z0-9.:_-]*$'   # never starts with "-"
 
-# port_of FILE: the number in the file's top-level "port" field, else nothing. grep -o prints only
-# the matched `"port": N` text, so no other byte of the file (the token) reaches this shell.
+# port_of FILE: the number after the first "port" field found anywhere in the file by a plain
+# regex (not real JSON parsing, so this isn't scoped to the object's top level), else nothing.
+# grep -o prints only the matched `"port": N` text, so no other byte of the file (the token)
+# reaches this shell. The digit run is unbounded so a too-long number (e.g. 655350) is matched
+# whole and rejected by the range check below, instead of being truncated to a valid-looking port.
 port_of() {
   local p
-  p=$(grep -oE '"port"[[:space:]]*:[[:space:]]*[0-9]{1,5}' "$1" 2>/dev/null | head -n 1 | grep -oE '[0-9]+$') || return 0
+  p=$(grep -oE '"port"[[:space:]]*:[[:space:]]*[0-9]+' "$1" 2>/dev/null | head -n 1 | grep -oE '[0-9]+$') || return 0
   if [ -n "$p" ] && [ "$p" -ge 1 ] && [ "$p" -le 65535 ]; then echo "$p"; fi
 }
 
@@ -44,19 +48,40 @@ mtime() { date -r "$1" +%s 2>/dev/null || echo 0; }
 stamp() { echo "$(ports | tr '\n' ' ')$(mtime "$CONF")"; }
 boxes() { [ -f "$CONF" ] && grep -E "$BOX_RE" "$CONF" || true; }
 
+# xml_escape STR: STR with &, < and > replaced by their XML entities, for embedding paths (from
+# $HOME, which may itself contain any of those characters) in the plist's <string> values.
+xml_escape() {
+  local s=$1
+  s=${s//&/&amp;}
+  s=${s//</&lt;}
+  s=${s//>/&gt;}
+  printf '%s' "$s"
+}
+
+# kill_pids: kill every per-box subshell's ssh child (pkill -P) as well as the subshell itself.
+# Shared by the TERM/INT trap and the "ports or boxes changed" reconnect in run(), below, both of
+# which run with run()'s local `pids` array already in scope.
+kill_pids() {
+  if [ ${#pids[@]} -gt 0 ]; then
+    pkill -P "$(echo "${pids[@]}" | tr ' ' ',')" 2>/dev/null || true
+    kill "${pids[@]}" 2>/dev/null || true
+  fi
+}
+
 # One tunnel per box, each restarted with backoff (1 s doubling to 60 s) when it drops. When the
 # ports or the box list change, every tunnel is restarted with the new values.
 run() {
   local pids=() box st
-  # ${pids[@]+...}: bash 3.2 treats an empty array as unset under set -u.
-  trap 'kill ${pids[@]+"${pids[@]}"} 2>/dev/null; exit 0' TERM INT
+  trap 'kill_pids; exit 0' TERM INT
   while true; do
     st=$(stamp)
     local ps; ps=$(ports | tr '\n' ' ')
     if [ -z "$ps" ]; then echo "solenta-bridge: Solenta is not running (no ports in $SOLENTA_DIR); waiting" >&2; fi
     pids=()
     if [ -n "$ps" ]; then
-      for box in $(boxes); do
+      local bx; bx=$(boxes)
+      if [ -z "$bx" ]; then echo "solenta-bridge: ports found but no boxes configured (run 'solenta-bridge install user@box...'); waiting" >&2; fi
+      for box in $bx; do
         # shellcheck disable=SC2086 # $ps is a list of validated port numbers
         ( delay=1
           while true; do
@@ -72,27 +97,35 @@ run() {
     fi
     while [ "$(stamp)" = "$st" ]; do sleep 5; done
     echo "solenta-bridge: Solenta ports or boxes changed; reconnecting" >&2
-    if [ ${#pids[@]} -gt 0 ]; then pkill -P "$(echo "${pids[@]}" | tr ' ' ',')" 2>/dev/null || true; kill "${pids[@]}" 2>/dev/null || true; fi
+    kill_pids
   done
 }
 
 install_agent() {
-  local b self
+  local b dest_esc log_esc
   [ $# -gt 0 ] || { echo "usage: solenta-bridge install user@box..." >&2; exit 2; }
   for b in "$@"; do [[ $b =~ $BOX_RE ]] || { echo "not user@host: $b" >&2; exit 2; }; done
   mkdir -p "$(dirname "$CONF")" "$(dirname "$PLIST")"
   printf '%s\n' "$@" > "$CONF"
-  self=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
+  # launchd runs the plist's ProgramArguments verbatim, from wherever this script happens to sit
+  # (often ~/Downloads): a background launchd /bin/bash there can be blocked by macOS's privacy
+  # protections, and it breaks outright if the download is later moved or deleted. Copy self
+  # somewhere stable and point the plist at the copy instead.
+  mkdir -p "$(dirname "$AGENT_COPY")"
+  cp "$(cd "$(dirname "$0")" && pwd)/$(basename "$0")" "$AGENT_COPY"
+  chmod 755 "$AGENT_COPY"
+  dest_esc=$(xml_escape "$AGENT_COPY")
+  log_esc=$(xml_escape "$HOME/Library/Logs/solenta-bridge.log")
   cat > "$PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>Label</key><string>$LABEL</string>
-  <key>ProgramArguments</key><array><string>/bin/bash</string><string>$self</string><string>run</string></array>
+  <key>ProgramArguments</key><array><string>/bin/bash</string><string>$dest_esc</string><string>run</string></array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
-  <key>StandardErrorPath</key><string>$HOME/Library/Logs/solenta-bridge.log</string>
+  <key>StandardErrorPath</key><string>$log_esc</string>
 </dict>
 </plist>
 PLIST
@@ -104,7 +137,7 @@ PLIST
 
 uninstall_agent() {
   "$LAUNCHCTL" bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
-  rm -f "$PLIST"
+  rm -f "$PLIST" "$AGENT_COPY"
   echo "solenta-bridge: removed (kept $CONF)"
 }
 

@@ -21,6 +21,7 @@ if grep -q SUPERSECRET "$d/trace"; then fail "token visible in the shell trace";
 . "$B"
 [ "$(port_of /nonexistent)" = "" ] || fail missing
 printf '{"port": 99999, "token": "x"}' > "$d/big.json"; [ "$(port_of "$d/big.json")" = "" ] || fail range
+printf '{"port": 655350, "token": "x"}' > "$d/big2.json"; [ "$(port_of "$d/big2.json")" = "" ] || fail "range truncation"
 printf '{"token": "x"}' > "$d/none.json"; [ "$(port_of "$d/none.json")" = "" ] || fail none
 [ "$(ssh_argv agent@box.ts.net 53121 61002 | tr '\n' ' ')" = \
   "ssh -N -T -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -R 127.0.0.1:53121:127.0.0.1:53121 -R 127.0.0.1:61002:127.0.0.1:61002 -- agent@box.ts.net " ] || fail argv
@@ -30,7 +31,12 @@ if bash "$B" install '-oProxyCommand=x@y' 2>/dev/null; then fail "accepted an op
 if bash "$B" install '-x@y' 2>/dev/null; then fail "accepted a leading dash"; fi
 bash "$B" install agent@box1.ts.net agent@100.64.0.2 >/dev/null
 [ "$(cat "$d/conf")" = $'agent@box1.ts.net\nagent@100.64.0.2' ] || fail conf
-grep -q "<string>$B</string><string>run</string>" "$d/la/x.plist" || fail plist
+# install copies itself somewhere launchd can always reach (not wherever it was downloaded to, and
+# not broken if that original is later moved) and points the plist at the copy, not at $B.
+COPY="$HOME/Library/Application Support/AgentOS/solenta-bridge"
+[ -x "$COPY" ] || fail "no stable copy at $COPY"
+cmp -s "$COPY" "$B" || fail "copy differs from source"
+grep -q "<string>$COPY</string><string>run</string>" "$d/la/x.plist" || fail plist
 grep -q "bootstrap gui/$(id -u) $d/la/x.plist" "$d/launchctl.log" || fail bootstrap
 if grep -rq SUPERSECRET "$d/conf" "$d/la" "$d/launchctl.log"; then fail "token written out"; fi
 # The loop: one ssh per box with both forwards, retried after a drop.
@@ -45,4 +51,14 @@ grep -qx -- "-N -T -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveIn
 [ "$(grep -c 'agent@box1.ts.net' "$d/ssh.log")" -ge 2 ] || fail "no retry"
 bash "$B" uninstall >/dev/null
 [ ! -e "$d/la/x.plist" ] && grep -q "bootout gui/$(id -u)/os.agent.solenta-bridge" "$d/launchctl.log" || fail uninstall
+[ ! -e "$COPY" ] || fail "uninstall left the stable copy behind"
+
+# A $HOME containing XML-special characters must not corrupt the plist: install escapes & < >.
+d2="$d/ho&me"; mkdir -p "$d2"
+HOME=$d2 SOLENTA_BRIDGE_CONF=$d/amp-conf SOLENTA_BRIDGE_PLIST=$d/la/amp.plist \
+  bash "$B" install agent@box1.ts.net >/dev/null
+grep -q '&amp;' "$d/la/amp.plist" || fail "HOME's & not escaped in plist"
+if command -v plutil >/dev/null 2>&1; then
+  plutil -lint "$d/la/amp.plist" >/dev/null || fail "plutil -lint rejected the escaped plist"
+fi
 echo "solenta-bridge OK"
