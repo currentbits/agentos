@@ -73,6 +73,22 @@ describe('system parsers', () => {
     child.kill();
   });
 
+  it('resumes a paused stream when the socket closes without draining (killOnClose=false)', async () => {
+    const cbs: (() => void)[] = [];
+    const sent: string[] = [];
+    const s = Object.assign(new EventEmitter(), { OPEN: 1, readyState: 1, bufferedAmount: 0,
+      send: (d: string, cb: () => void) => { sent.push(d); cbs.push(cb); }, close: () => {} });
+    const child = streamToSocket(s as never, ['node', '-e', 'setInterval(()=>process.stdout.write("x".repeat(1000)),5)'], false);
+    while (sent.length === 0) await delay(10);
+    s.bufferedAmount = 2 * 1024 * 1024;
+    while (!child.stdout!.isPaused()) await delay(10);
+    // Socket closes while still backed up: none of the pending send callbacks ever fire.
+    s.readyState = 3;
+    s.emit('close');
+    expect(child.stdout!.isPaused()).toBe(false);
+    child.kill();
+  });
+
   it('kills the journal stream on socket close, but leaves the update stream running', async () => {
     const journal = fakeSocket();
     streamToSocket(journal, PID_SCRIPT, true);
