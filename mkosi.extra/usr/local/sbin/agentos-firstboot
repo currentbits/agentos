@@ -110,6 +110,11 @@ else
   systemctl disable --quiet --now --no-block agentos-solenta.path agentos-solenta.service
 fi
 
+# 5d. CI settings for agentos-ci (runs as agent; agentos.env is root-only). Invalid -> default.
+cp=$(env_get "$AGENTOS_ENV" AGENTOS_CI_MAX_PARALLEL | grep -xE '[1-9]|1[0-6]' || echo 2)
+printf 'MAX_PARALLEL=%s\n' "$cp" > /etc/agentos/ci.conf
+chmod 644 /etc/agentos/ci.conf
+
 # 6. Console lockout prevention last, so it sees Tailscale. It restarts getty@tty1, which is
 # safe because this runs as its own unit (agentos-config apply restarts the unit).
 /usr/local/sbin/agentos-console-apply

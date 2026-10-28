@@ -38,7 +38,7 @@ validate_setting() {
   case $1 in
     AGENTOS_LAN_SSH|AGENTOS_AUTO_REBOOT|AGENTOS_WEB|AGENTOS_SOLENTA) re='^[01]$'; want='0 or 1' ;;
     AGENTOS_CONSOLE)              re='^(headless|terminal)$'; want='headless or terminal' ;;
-    AGENTOS_MAX_DESKTOPS)         re='^([1-9]|1[0-6])$'; want='a number from 1 to 16' ;;
+    AGENTOS_MAX_DESKTOPS|AGENTOS_CI_MAX_PARALLEL) re='^([1-9]|1[0-6])$'; want='a number from 1 to 16' ;;
     AGENTOS_SCREENSHOT_WIDTH)     re='^(6[4-9][0-9]|[7-9][0-9]{2}|1[0-8][0-9]{2}|19[01][0-9]|1920)$'; want='a number from 640 to 1920' ;;
     AGENTOS_DESKTOP_IDLE_MINUTES) re='^(0|[1-9][0-9]{0,5})$'; want='a number of minutes from 0 to 999999' ;;
     AGENTOS_WEB_USERS)            re='^[^,[:space:]]+@[^,[:space:]]+(,[^,[:space:]]+@[^,[:space:]]+)*$'; want='a comma-separated list of tailnet logins (you@example.com)' ;;

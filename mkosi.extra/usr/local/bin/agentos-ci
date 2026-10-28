@@ -1,0 +1,4 @@
+#!/bin/bash
+# AgentOS built-in CI. See `agentos-ci --help`.
+set -euo pipefail
+exec /usr/local/lib/agentos/venv/bin/python /usr/local/lib/agentos/ci/main.py "$@"

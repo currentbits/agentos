@@ -28,7 +28,7 @@ vhome=$(runuser -u agent -- mktemp -d)
     echo "$c ${v// /_} $(sha256sum "$p" | cut -d' ' -f1)"
   done
 } >> /var/lib/agentos-manifest.txt
-{ echo "# agentos-computer python"; /usr/local/lib/agentos/venv/bin/pip freeze --disable-pip-version-check; } >> /var/lib/agentos-manifest.txt
+{ echo "# agentos-computer python (venv shared with agentos-ci)"; /usr/local/lib/agentos/venv/bin/pip freeze --disable-pip-version-check; } >> /var/lib/agentos-manifest.txt
 { echo "# agentos-web npm"; node -e '
     const d = "/usr/local/lib/agentos/web/server";
     for (const n of Object.keys(require(d + "/package.json").dependencies))
@@ -48,6 +48,12 @@ for f in "$A/.codex/auth.json" \
   if [ -e "$f" ]; then fail "CLI auth state baked into image: $f"; fi
 done
 if [ -e /etc/agentos/mcp-token ]; then fail "mcp-token baked into image (first-boot-only secret)"; fi
+# CI and Solenta state, and the skill files register-mcp installs at boot, are per-install.
+for f in "$A/.local/share/agentos-ci" "$A/.cache/agentos-ci" "$A/git" "$A/solenta" "$A/.config/Solenta" "$A/.solenta" \
+         "$A/.codex/AGENTS.md" "$A/.config/opencode/AGENTS.md" "$A/.grok/skills"; do
+  if [ -e "$f" ]; then fail "per-install state baked into image: $f"; fi
+done
+/usr/local/lib/agentos/venv/bin/python -c 'import yaml, mcp' || fail "agentos-ci python deps missing"
 for c in claude codex opencode grok; do
   [ "$(readlink -f "/usr/local/bin/$c")" = /usr/local/lib/agentos/cli-wrapper ] || fail "/usr/local/bin/$c is not the CLI wrapper"
 done
