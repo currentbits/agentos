@@ -16,9 +16,9 @@ Before you declare a task in a repository done, and the repository has CI (`.age
 
 Never weaken, skip or delete tests or CI configuration to get a pass.
 
-CI steps run as the `agent` user with API keys and other secrets kept out of their environment
-unless a step explicitly declares one in `secrets:`. This is not a sandbox: a step still runs with
-the same filesystem access as `agent`, so it can read anything under /home/agent. Don't rely on a
-CI run to isolate untrusted code.
+Steps run with everything `agent` can do: they can read `~/.config/agentos/secrets.env` and
+anything else in /home/agent, and use `sudo` and `docker` (root on this box). Only the step
+environment is free of API keys unless a step lists one under `secrets:`. `image:` steps run
+inside a container that sees only the checkout. Never run untrusted code through CI.
 
 When you report back, give the run id and its result.

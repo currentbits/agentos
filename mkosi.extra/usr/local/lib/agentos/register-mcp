@@ -49,9 +49,10 @@ register() {
 }
 
 register agentos-computer /usr/local/bin/agentos-computer
-# ci_wait blocks until a run ends; Codex cuts an MCP tool call off after 300 s by default. (The
-# skill tells agents of every CLI to call ci_wait again if it returns early.)
-register agentos-ci /usr/local/bin/agentos-ci-mcp 'tool_timeout_sec = 1800'
+# ci_wait blocks until a run ends; Codex cuts an MCP tool call off after 300 s by default. 1900 s
+# (ci_wait's own 1800 s default plus slack) avoids ties with ci_wait's own timeout. (The skill
+# tells agents of every CLI to call ci_wait again if it returns early.)
+register agentos-ci /usr/local/bin/agentos-ci-mcp 'tool_timeout_sec = 1900'
 grep -q '^\[mcp\]' "$HOME/.grok/config.toml" || append_atomically "$HOME/.grok/config.toml" '\n[mcp]\nmax_output_bytes = 4000000\n'
 
 /usr/local/bin/agentos-ci install-skill >/dev/null || { echo "agentos-ci: skill install failed" >&2; rc=1; }

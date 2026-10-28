@@ -30,6 +30,42 @@ def test_skill_install_is_idempotent_and_keeps_user_content(home):
     assert set(skill.install().values()) <= {"unchanged", "kept"}
 
 
+def test_skill_install_kept_on_missing_end_marker(home, capsys):
+    skill.install()
+    codex = home / ".codex/AGENTS.md"
+    text = codex.read_text()
+    assert text.count(END) == 1
+    broken = text.replace(END + "\n", "")             # drop the END line: an orphan BEGIN remains
+    codex.write_text(broken)
+    res = skill.install()
+    assert res[".codex/AGENTS.md"] == "kept"
+    assert codex.read_text() == broken                # left alone, not silently merged with new text
+    assert "malformed" in capsys.readouterr().err
+
+
+def test_skill_install_kept_on_duplicate_blocks(home, capsys):
+    skill.install()
+    codex = home / ".codex/AGENTS.md"
+    text = codex.read_text()
+    doubled = text + text
+    codex.write_text(doubled)
+    res = skill.install()
+    assert res[".codex/AGENTS.md"] == "kept"
+    assert codex.read_text() == doubled
+    assert "malformed" in capsys.readouterr().err
+
+
+def test_skill_install_appends_cleanly_with_no_trailing_newline(home):
+    oc = home / ".config/opencode/AGENTS.md"
+    oc.parent.mkdir(parents=True)
+    oc.write_text("user rules")                       # no trailing newline at all
+    res = skill.install()
+    assert res[".config/opencode/AGENTS.md"] == "updated"
+    text = oc.read_text()
+    assert text.startswith("user rules\n\n" + BEGIN)
+    assert text.count(BEGIN) == 1 and text.count(END) == 1
+
+
 def test_mcp_tools(home):
     from agentos_ci import mcp_server
     tools = {t.name for t in asyncio.run(mcp_server.mcp.list_tools())}
