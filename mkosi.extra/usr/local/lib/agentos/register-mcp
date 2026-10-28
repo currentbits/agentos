@@ -1,10 +1,8 @@
 #!/bin/bash
-# Register the agentos-computer MCP server with every agent CLI. Idempotent, runs as agent at
-# every boot (from agentos-firstboot), never edits other entries. Done at boot, not build time,
-# so no CLI state is baked into the image.
+# Register AgentOS's MCP servers (agentos-computer, agentos-ci) with every agent CLI, and install
+# the agentos-ci skill. Idempotent, runs as agent at every boot (from agentos-firstboot), never
+# edits other entries. Done at boot, not build time, so no CLI state is baked into the image.
 set -euo pipefail
-NAME=agentos-computer
-CMD=/usr/local/bin/agentos-computer
 rc=0
 
 # Hold one lock for the whole run: a concurrent run (e.g. two boots racing, or a manual re-apply)
@@ -24,26 +22,37 @@ append_atomically() {
   cp -p "$f" "$tmp" && printf "$@" >>"$tmp" && mv "$tmp" "$f" || { rm -f "$tmp"; return 1; }
 }
 
-# Claude Code (user scope, ~/.claude.json)
-if ! claude mcp get "$NAME" >/dev/null 2>&1; then
-  claude mcp add --scope user "$NAME" -- "$CMD" >/dev/null || { echo "claude: registration failed" >&2; rc=1; }
-fi
+# register <name> <command> [codex-extra]: the command takes no arguments (a launcher per server),
+# so every CLI's config shape stays the same. codex-extra is one more TOML line for Codex only.
+register() {
+  local name=$1 cmd=$2 extra=${3:-} f tmp x
+  # Claude Code (user scope, ~/.claude.json)
+  if ! claude mcp get "$name" >/dev/null 2>&1; then
+    claude mcp add --scope user "$name" -- "$cmd" >/dev/null || { echo "claude: registering $name failed" >&2; rc=1; }
+  fi
+  # Codex and Grok share the TOML shape
+  for f in "$HOME/.codex/config.toml" "$HOME/.grok/config.toml"; do
+    mkdir -p "$(dirname "$f")"; touch "$f"
+    [[ $f == */.codex/* && -n $extra ]] && x="$extra"$'\n' || x=
+    grep -q "^\[mcp_servers\.$name\]" "$f" || append_atomically "$f" '\n[mcp_servers.%s]\ncommand = "%s"\n%s' "$name" "$cmd" "$x"
+  done
+  # opencode (JSON)
+  f=$HOME/.config/opencode/opencode.json
+  mkdir -p "$(dirname "$f")"
+  [ -s "$f" ] || printf '{"$schema":"https://opencode.ai/config.json"}\n' > "$f"
+  tmp=$(mktemp "$f.XXXXXX")
+  if jq --arg n "$name" --arg c "$cmd" '.mcp[$n] //= {type: "local", command: [$c], enabled: true}' "$f" > "$tmp"; then
+    mv "$tmp" "$f"
+  else
+    rm -f "$tmp"; echo "opencode: $f is not valid JSON, left untouched" >&2; rc=1
+  fi
+}
 
-# Codex and Grok share the TOML shape
-for f in "$HOME/.codex/config.toml" "$HOME/.grok/config.toml"; do
-  mkdir -p "$(dirname "$f")"; touch "$f"
-  grep -q "^\[mcp_servers\.$NAME\]" "$f" || append_atomically "$f" '\n[mcp_servers.%s]\ncommand = "%s"\n' "$NAME" "$CMD"
-done
+register agentos-computer /usr/local/bin/agentos-computer
+# ci_wait blocks until a run ends; Codex cuts an MCP tool call off after 300 s by default. (The
+# skill tells agents of every CLI to call ci_wait again if it returns early.)
+register agentos-ci /usr/local/bin/agentos-ci-mcp 'tool_timeout_sec = 1800'
 grep -q '^\[mcp\]' "$HOME/.grok/config.toml" || append_atomically "$HOME/.grok/config.toml" '\n[mcp]\nmax_output_bytes = 4000000\n'
 
-# opencode (JSON)
-f=$HOME/.config/opencode/opencode.json
-mkdir -p "$(dirname "$f")"
-[ -s "$f" ] || printf '{"$schema":"https://opencode.ai/config.json"}\n' > "$f"
-tmp=$(mktemp "$f.XXXXXX")
-if jq --arg n "$NAME" --arg c "$CMD" '.mcp[$n] //= {type: "local", command: [$c], enabled: true}' "$f" > "$tmp"; then
-  mv "$tmp" "$f"
-else
-  rm -f "$tmp"; echo "opencode: $f is not valid JSON, left untouched" >&2; rc=1
-fi
+/usr/local/bin/agentos-ci install-skill >/dev/null || { echo "agentos-ci: skill install failed" >&2; rc=1; }
 exit "$rc"

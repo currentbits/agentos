@@ -3,7 +3,7 @@ import argparse
 import json
 import sys
 
-from . import pipeline, remotes, runs
+from . import pipeline, remotes, runs, skill
 
 
 def parser() -> argparse.ArgumentParser:
@@ -33,6 +33,8 @@ def parser() -> argparse.ArgumentParser:
     rc = rsub.add_parser("create", parents=[common])
     rc.add_argument("name")
     rsub.add_parser("list", parents=[common])
+    sub.add_parser("mcp", help="run the MCP server on stdio")
+    sub.add_parser("install-skill", parents=[common], help="install the agent skill (register-mcp runs this)")
     for hidden in ("_spawn", "_worker"):
         sub.add_parser(hidden).add_argument("id")
     return p
@@ -86,6 +88,12 @@ def main(argv=None) -> int:
         elif args.cmd == "remote":
             rs = remotes.list_remotes()
             out(args, rs, "\n".join(f"{r['name']}  {r['remote_add']}" for r in rs))
+        elif args.cmd == "mcp":
+            from . import mcp_server
+            mcp_server.main()
+        elif args.cmd == "install-skill":
+            res = skill.install()
+            out(args, res, "\n".join(f"{v:<9} ~/{k}" for k, v in res.items()))
         elif args.cmd == "_spawn":
             runs.spawn(args.id)
         elif args.cmd == "_worker":

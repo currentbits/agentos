@@ -1,0 +1,4 @@
+#!/bin/bash
+# agentos-ci MCP server on stdio (registered with every agent CLI by register-mcp).
+set -euo pipefail
+exec /usr/local/lib/agentos/venv/bin/python /usr/local/lib/agentos/ci/main.py mcp
