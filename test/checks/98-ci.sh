@@ -20,7 +20,7 @@ check_ci_installed() {
 check_ci_registered_with_every_cli() {
   vml 'claude mcp get agentos-ci 2>&1 | grep -q /usr/local/bin/agentos-ci-mcp && codex mcp list 2>&1 | grep -q agentos-ci &&
        grok mcp list 2>&1 | grep -q agentos-ci' &&
-  vm 'grep -A2 "^\[mcp_servers\.agentos-ci\]$" ~/.codex/config.toml | grep -qx "tool_timeout_sec = 1800" &&
+  vm 'grep -A2 "^\[mcp_servers\.agentos-ci\]$" ~/.codex/config.toml | grep -qx "tool_timeout_sec = 1900" &&
       jq -e ".mcp[\"agentos-ci\"].command == [\"/usr/local/bin/agentos-ci-mcp\"]" ~/.config/opencode/opencode.json >/dev/null'
 }
 check_ci_skill_files_present() {
