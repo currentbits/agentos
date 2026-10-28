@@ -51,7 +51,7 @@ done
 if [ -e /etc/agentos/mcp-token ]; then fail "mcp-token baked into image (first-boot-only secret)"; fi
 # CI and Solenta state, and the skill files register-mcp installs at boot, are per-install.
 for f in "$A/.local/share/agentos-ci" "$A/.cache/agentos-ci" "$A/git" "$A/solenta" "$A/.config/Solenta" "$A/.solenta" \
-         "$A/.codex/AGENTS.md" "$A/.config/opencode/AGENTS.md" "$A/.grok/skills"; do
+         "$A/.codex/AGENTS.md" "$A/.config/opencode/AGENTS.md" "$A/.grok/skills" "$A/.claude/skills/agentos-ci"; do
   if [ -e "$f" ]; then fail "per-install state baked into image: $f"; fi
 done
 /usr/local/lib/agentos/venv/bin/python -c 'import yaml, mcp' || fail "agentos-ci python deps missing"

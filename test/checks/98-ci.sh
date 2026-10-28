@@ -64,16 +64,20 @@ steps: [{name: env, run: test \"\$ANTHROPIC_API_KEY\" = sk-test-dummy}]") &&
     ! grep -rq sk-test-dummy ~/.local/share/agentos-ci/runs/"$j"/run.json'
 }
 check_ci_cancel_kills_steps() {
-  # pgrep -x, not -f: this whole check is itself a `bash -c` command whose own argv contains the
-  # literal text "sleep 31337 & sleep 31338" (it's right there in the ci.yml content below), so a
-  # `-f` cmdline match would always find that process too, even after cancel kills the real ones.
-  # `-x` matches process *names* only ("sleep" vs "bash"), which this invocation can't self-match.
+  # pgrep -a -x sleep | grep -q 'sleep 3133[78]', not a plain -f or -x: this whole check is itself
+  # a `bash -c` command whose own argv contains the literal text "sleep 31337 & sleep 31338" (it's
+  # right there in the ci.yml content below), so a `-f` cmdline match would always find that outer
+  # process too, even after cancel kills the real ones. Plain `-x sleep` avoids self-matching (it
+  # matches process *names* only, "sleep" vs "bash") but would also match any unrelated "sleep"
+  # already running on the box. `-a` prints the matched command lines, and the grep narrows that to
+  # this check's own sleep durations (31337/31338), so it neither self-matches nor sees others.
   vm "$CI_REPO"'
     d=$(ci_repo cancel .agentos/ci.yml "steps: [{name: s, run: sleep 31337 & sleep 31338}]") &&
     i=$(agentos-ci run "$d") &&
-    for _ in $(seq 1 30); do pgrep -x sleep >/dev/null && break; sleep 0.5; done && pgrep -x sleep >/dev/null &&
+    for _ in $(seq 1 30); do pgrep -a -x sleep | grep -q "sleep 3133[78]" && break; sleep 0.5; done &&
+    pgrep -a -x sleep | grep -q "sleep 3133[78]" &&
     test "$(agentos-ci cancel "$i" --json | jq -r .status)" = cancelled && sleep 1 &&
-    ! pgrep -x sleep >/dev/null'
+    ! (pgrep -a -x sleep | grep -q "sleep 3133[78]")'
 }
 check_ci_autodetect_npm() {
   vm "$CI_REPO"'
