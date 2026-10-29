@@ -1,0 +1,3 @@
+#!/bin/sh
+# AgentOS: one line at login when a new release is available (agentos-update-check.timer, daily).
+exec /usr/local/bin/agentos-update --notice

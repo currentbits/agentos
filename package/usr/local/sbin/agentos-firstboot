@@ -115,6 +115,10 @@ cp=$(env_get "$AGENTOS_ENV" AGENTOS_CI_MAX_PARALLEL | grep -xE '[1-9]|1[0-6]' ||
 printf 'MAX_PARALLEL=%s\n' "$cp" > /etc/agentos/ci.conf
 chmod 644 /etc/agentos/ci.conf
 
+# 5e. The console's "AgentOS X available" line, from the last daily check (update.json survives a
+# reboot, /run/issue.d does not).
+/usr/local/bin/agentos-update --issue || echo "warning: AgentOS update notice not refreshed" >&2
+
 # 6. Console lockout prevention last, so it sees Tailscale. It restarts getty@tty1, which is
 # safe because this runs as its own unit (agentos-config apply restarts the unit).
 /usr/local/sbin/agentos-console-apply
