@@ -88,9 +88,13 @@ check_solenta_backoff_recovers_without_resetfailed() {
 check_solenta_skips_when_port_taken() {
   # Solenta's own nohup copy already serves 4620: the unit stays out of the way (no restart loop).
   local rc=0
+  # Checked by socket state (ss), not `pgrep -f "http.server 4620"`: this very ssh command line
+  # itself contains that text (the setsid line below spells it out literally to start the real
+  # listener), so a cmdline-text search always finds itself -- no amount of pattern-obfuscation
+  # fixes that, since the *unobfuscated* command text is what's really there to match against.
   solenta_install_stub && vm 'sudo systemctl stop agentos-solenta.path agentos-solenta.service &&
-    for _ in $(seq 1 20); do pgrep -f "http.server 4620" >/dev/null || break; sleep 0.5; done &&
-    ! pgrep -f "http.server 4620" >/dev/null &&
+    for _ in $(seq 1 20); do ss -Htln "sport = :4620" | grep -q . || break; sleep 0.5; done &&
+    ! ss -Htln "sport = :4620" | grep -q . &&
     (setsid python3 -m http.server 4620 --bind 127.0.0.1 </dev/null >/dev/null 2>&1 &) &&
     for _ in $(seq 1 20); do curl -s -o /dev/null -m 1 http://127.0.0.1:4620/ && break; sleep 0.5; done &&
     n=$(systemctl show agentos-solenta.service -p NRestarts --value) &&
