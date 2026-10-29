@@ -1,0 +1,4 @@
+#!/bin/bash
+# The agentos package's postinst: the steps live in /usr/local/lib/agentos/configure (unit-tested).
+set -euo pipefail
+exec /usr/local/lib/agentos/configure "$@"

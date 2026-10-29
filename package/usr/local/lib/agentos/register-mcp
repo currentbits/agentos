@@ -2,8 +2,13 @@
 # Register AgentOS's MCP servers (agentos-computer, agentos-ci) with every agent CLI, and install
 # the agentos-ci skill. Idempotent, runs as agent at every boot (from agentos-firstboot), never
 # edits other entries. Done at boot, not build time, so no CLI state is baked into the image.
+#   register-mcp            add AgentOS's entries that are missing; existing ones are left alone
+#   register-mcp --update   also rewrite AgentOS's own entries to this release's values (the
+#                           package's postinst runs this after an update)
 set -euo pipefail
 rc=0
+UPDATE=0; [ "${1:-}" = --update ] && UPDATE=1
+CI=${AGENTOS_CI:-/usr/local/bin/agentos-ci}   # tests point this at a fake
 
 # Hold one lock for the whole run: a concurrent run (e.g. two boots racing, or a manual re-apply)
 # must not interleave writes to the same config files.
@@ -22,11 +27,28 @@ append_atomically() {
   cp -p "$f" "$tmp" && printf "$@" >>"$tmp" && mv "$tmp" "$f" || { rm -f "$tmp"; return 1; }
 }
 
+# drop_toml_table <file> <name>: rewrite the file without the [mcp_servers.<name>] table (and its
+# sub-tables), and without the blank lines just before it, so the re-appended table doesn't grow
+# the file. Everything else is kept byte for byte.
+drop_toml_table() {
+  local f; f=$(readlink -f "$1")
+  local tmp; tmp=$(mktemp "$f.XXXXXX")
+  # shellcheck disable=SC2016 # awk program, not shell
+  awk -v h="[mcp_servers.$2]" -v p="[mcp_servers.$2." '
+    /^[[:space:]]*$/ { blanks = blanks $0 "\n"; next }
+    $0 == h || index($0, p) == 1 { skip = 1; blanks = ""; next }
+    /^\[/ { skip = 0 }
+    !skip { printf "%s%s\n", blanks, $0 }
+    { blanks = "" }
+    END { if (!skip) printf "%s", blanks }' "$f" > "$tmp" && cp --attributes-only -p "$f" "$tmp" && mv "$tmp" "$f" || { rm -f "$tmp"; return 1; }
+}
+
 # register <name> <command> [codex-extra]: the command takes no arguments (a launcher per server),
 # so every CLI's config shape stays the same. codex-extra is one more TOML line for Codex only.
 register() {
-  local name=$1 cmd=$2 extra=${3:-} f tmp x
+  local name=$1 cmd=$2 extra=${3:-} f tmp x op='//='
   # Claude Code (user scope, ~/.claude.json)
+  if [ "$UPDATE" = 1 ]; then claude mcp remove --scope user "$name" >/dev/null 2>&1 || true; fi
   if ! claude mcp get "$name" >/dev/null 2>&1; then
     claude mcp add --scope user "$name" -- "$cmd" >/dev/null || { echo "claude: registering $name failed" >&2; rc=1; }
   fi
@@ -34,6 +56,7 @@ register() {
   for f in "$HOME/.codex/config.toml" "$HOME/.grok/config.toml"; do
     mkdir -p "$(dirname "$f")"; touch "$f"
     [[ $f == */.codex/* && -n $extra ]] && x="$extra"$'\n' || x=
+    if [ "$UPDATE" = 1 ]; then drop_toml_table "$f" "$name" || { echo "$f: updating $name failed" >&2; rc=1; continue; }; fi
     grep -q "^\[mcp_servers\.$name\]" "$f" || append_atomically "$f" '\n[mcp_servers.%s]\ncommand = "%s"\n%s' "$name" "$cmd" "$x"
   done
   # opencode (JSON)
@@ -41,7 +64,8 @@ register() {
   mkdir -p "$(dirname "$f")"
   [ -s "$f" ] || printf '{"$schema":"https://opencode.ai/config.json"}\n' > "$f"
   tmp=$(mktemp "$f.XXXXXX")
-  if jq --arg n "$name" --arg c "$cmd" '.mcp[$n] //= {type: "local", command: [$c], enabled: true}' "$f" > "$tmp"; then
+  if [ "$UPDATE" = 1 ]; then op='='; fi
+  if jq --arg n "$name" --arg c "$cmd" ".mcp[\$n] $op {type: \"local\", command: [\$c], enabled: true}" "$f" > "$tmp"; then
     mv "$tmp" "$f"
   else
     rm -f "$tmp"; echo "opencode: $f is not valid JSON, left untouched" >&2; rc=1
@@ -55,5 +79,5 @@ register agentos-computer /usr/local/bin/agentos-computer
 register agentos-ci /usr/local/bin/agentos-ci-mcp 'tool_timeout_sec = 1900'
 grep -q '^\[mcp\]' "$HOME/.grok/config.toml" || append_atomically "$HOME/.grok/config.toml" '\n[mcp]\nmax_output_bytes = 4000000\n'
 
-/usr/local/bin/agentos-ci install-skill >/dev/null || { echo "agentos-ci: skill install failed" >&2; rc=1; }
+"$CI" install-skill >/dev/null || { echo "agentos-ci: skill install failed" >&2; rc=1; }
 exit "$rc"

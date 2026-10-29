@@ -44,7 +44,9 @@ jobs:
             package/usr/local/lib/agentos/web-serve test/web_serve_test.sh \
             package/usr/local/lib/agentos/{cli-wrapper,register-mcp,solenta-pair,solenta-start} \
             package/usr/local/lib/agentos/ci/post-receive tools/solenta-bridge \
+            package/usr/local/lib/agentos/configure package/usr/local/lib/agentos/migrations/*.sh package/DEBIAN/postinst \
             test/wrapper_test.sh test/solenta_pair_test.sh test/bridge_test.sh \
+            test/configure_test.sh test/register_mcp_test.sh \
             tools/build-installer.sh test/installer-boot-test.sh test/install-test.sh installer/mkosi.extra/usr/local/sbin/* \
             installer/mkosi.extra/usr/lib/agentos-installer/lib.sh
           test/env_test.sh
@@ -54,6 +56,8 @@ jobs:
           test/wrapper_test.sh
           test/solenta_pair_test.sh
           test/bridge_test.sh
+          test/configure_test.sh
+          test/register_mcp_test.sh
 
       - name: agentos-ci unit tests
         run: |

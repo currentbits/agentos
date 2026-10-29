@@ -1,0 +1,66 @@
+#!/bin/bash
+# The agentos package's postinst (DEBIAN/postinst execs this). On "configure", in order:
+#   1. daemon-reload (and tmpfiles, for new entries)
+#   2. new units: enabled per the preset, started if enabled; existing units keep the owner's state
+#   3. one-time migrations (migrations/NNN-name.sh, each recorded in migrations.done once it succeeds)
+#   4. restart AgentOS's services (never agentos-solenta, desktops, tmux sessions or CI runs)
+#   5. re-register the MCP servers and the skill for agent (register-mcp --update)
+# A failing migration fails the configure, so dpkg reports it and the next update retries it.
+# During the image build (mkosi: a chroot, no running systemd, no agent user yet) the image already
+# is in this release's state: it only records the units as seen and the migrations as done.
+# AGENTOS_LIB, AGENTOS_STATE, AGENTOS_RUN and AGENTOS_OLD_UNITS point the unit tests at scratch dirs.
+set -euo pipefail
+[ "${1:-}" = configure ] || exit 0
+LIB=${AGENTOS_LIB:-/usr/local/lib/agentos}
+STATE=${AGENTOS_STATE:-/var/lib/agentos}
+RUN=${AGENTOS_RUN:-/run}
+OLD_UNITS=${AGENTOS_OLD_UNITS:-/etc/systemd/system}
+SERVICES=(agentos-web.service agentos-mcp-http.service agentos-novnc.service agentos-firewall.service)
+
+migrate() {  # migrate [--mark-all]
+  local m name done=$STATE/migrations.done
+  touch "$done"
+  for m in "$LIB"/migrations/[0-9][0-9][0-9]-*.sh; do
+    [ -e "$m" ] || continue
+    name=${m##*/}
+    grep -qxF "$name" "$done" && continue
+    if [ "${1:-}" != --mark-all ]; then
+      echo "agentos: migration $name"
+      bash "$m" || { echo "agentos: migration $name failed; the next update retries it" >&2; return 1; }
+    fi
+    echo "$name" >> "$done"
+  done
+}
+
+new_units() {
+  local u seen=$STATE/units.seen
+  # First configure on a box installed before the package existed: the units it already has (in the
+  # old place, /etc/systemd/system) count as seen, so they keep the owner's enabled/disabled state.
+  if [ ! -f "$seen" ]; then
+    { ls -A "$OLD_UNITS" 2>/dev/null || true; } | grep -xFf "$LIB/units.new" > "$seen" || true
+  fi
+  while IFS= read -r u; do
+    grep -qxF "$u" "$seen" && continue
+    systemctl preset "$u"
+    if systemctl is-enabled --quiet "$u"; then systemctl start --no-block "$u"; fi
+    echo "$u" >> "$seen"
+  done < "$LIB/units.new"
+}
+
+install -d -m 755 "$STATE"
+if [ ! -d "$RUN/systemd/system" ]; then
+  cp "$LIB/units.new" "$STATE/units.seen"
+  migrate --mark-all
+  exit 0
+fi
+
+systemctl daemon-reload
+systemd-tmpfiles --create /usr/lib/tmpfiles.d/agentos.conf
+new_units
+migrate
+systemctl try-restart "${SERVICES[@]}"
+if id agent >/dev/null 2>&1; then
+  timeout 120 runuser -u agent -- env -i HOME=/home/agent USER=agent \
+    PATH=/home/agent/.local/bin:/home/agent/.cargo/bin:/home/agent/.bun/bin:/home/agent/.opencode/bin:/home/agent/.grok/bin:/usr/local/bin:/usr/bin:/bin \
+    "$LIB/register-mcp" --update || echo "agentos: warning: MCP registration or skill install incomplete (agentos-config apply retries it)" >&2
+fi
