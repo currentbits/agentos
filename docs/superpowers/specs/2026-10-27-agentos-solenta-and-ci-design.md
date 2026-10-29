@@ -19,7 +19,7 @@ Builds on: the AgentOS base, desktops, installer and web UI specs (all merged on
 
 ## Facts about Solenta 0.27 this design relies on
 
-Investigated from the running app bundle (`/Applications/Solenta Nightly.app/Contents/Resources/app`, 0.27.0). Both the stable and Nightly channels share the userData dir `~/Library/Application Support/Solenta`.
+Investigated from the running app bundle (`/Applications/Solenta Nightly.app/Contents/Resources/app`, 0.26.0); the 0.27.0 Linux build was then tested headless on Debian 13 (see Amendments). Both the stable and Nightly channels share the userData dir `~/Library/Application Support/Solenta`.
 
 **Remote Connections** (`electron/remoteConnections.js`, used by Mode A):
 - Every remote script runs as `ssh -T -o BatchMode=yes -o StrictHostKeyChecking=yes … host "sh -c '…'"`: POSIX `sh`, non-interactive, non-login. It never uses sudo.
