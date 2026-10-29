@@ -40,6 +40,12 @@ chmod +x "$d/bin/"*
 ln -s /dev/null "$E/agentos-masked.service"
 touch "$U/agentos-masked.service"
 
+# A symlink to a regular file is left alone too: -f alone would follow it and treat it like a
+# plain file, so this exercises the separate "[ ! -L "$f" ]" guard that the /dev/null mask case
+# above doesn't (that target isn't a regular file either way).
+touch "$U/agentos-linked.service"
+ln -s "$U/agentos-linked.service" "$E/agentos-linked.service"
+
 # A package-owned /etc copy is left alone, including its enablement symlink.
 printf 'unit\n' > "$E/agentos-pkgowned.service"
 printf 'unit\n' > "$U/agentos-pkgowned.service"
@@ -56,6 +62,9 @@ run
 
 [ -L "$E/agentos-masked.service" ] || fail "the symlink mask was removed"
 ! grep -q agentos-masked "$L" || fail "the mask was touched: $(cat "$L")"
+
+[ -L "$E/agentos-linked.service" ] || fail "the symlink to a regular file was removed"
+! grep -q agentos-linked "$L" || fail "the symlink to a regular file was touched: $(cat "$L")"
 
 [ -f "$E/agentos-pkgowned.service" ] && [ ! -L "$E/agentos-pkgowned.service" ] || fail "the package-owned file was removed"
 [ -L "$E/multi-user.target.wants/agentos-pkgowned.service" ] || fail "the package-owned unit's enablement symlink was removed"

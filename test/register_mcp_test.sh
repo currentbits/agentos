@@ -2,7 +2,8 @@
 # Unit test for register-mcp: a fresh registration, a plain run leaving existing entries alone, and
 # --update rewriting AgentOS's own entries (a changed tool_timeout_sec, and a header with trailing
 # whitespace/comment that the old exact-match code would have missed) while keeping the user's
-# entries -- including a comment line of theirs directly below one of ours -- byte for byte,
+# entries -- including a comment line of theirs directly below one of ours, and one directly above
+# the next AgentOS header once a second --update puts AgentOS's tables last -- byte for byte,
 # idempotently. claude and agentos-ci are fakes.
 set -euo pipefail
 R=$(cd "$(dirname "$0")/.." && pwd)
@@ -53,6 +54,7 @@ OLD = "1"
 # my own server config, right below theirs
 [profiles.fast]
 model = "gpt-5-mini"
+# model = "o3"
 T
 printf '{"$schema":"x","mcp":{"mine":{"type":"local","command":["/opt/mine"]},"agentos-ci":{"type":"local","command":["/old"],"enabled":false}},"theme":"dark"}\n' > "$h/.config/opencode/opencode.json"
 printf 'agentos-ci /old\nmine /opt/mine\n' > "$d/claude"
@@ -72,6 +74,7 @@ command = "/opt/mine"
 # my own server config, right below theirs
 [profiles.fast]
 model = "gpt-5-mini"
+# model = "o3"
 
 [mcp_servers.agentos-computer]
 command = "/usr/local/bin/agentos-computer"
@@ -81,8 +84,13 @@ command = "/usr/local/bin/agentos-ci-mcp"
 tool_timeout_sec = 1900'
 [ "$(cat "$h/.codex/config.toml")" = "$want" ] || { diff <(echo "$want") "$h/.codex/config.toml"; fail "codex --update"; }
 cp "$h/.codex/config.toml" "$d/codex.once"
+
+# AgentOS's tables now sit last, so "# model = \"o3\"" (the user's own, at the end of their last
+# table) sits directly above the next AgentOS header on every later --update: it must survive, and
+# the result must be byte-identical to the first --update's (idempotent).
 run --update
-cmp -s "$h/.codex/config.toml" "$d/codex.once" || fail "--update not idempotent"
+grep -qx '# model = "o3"' "$h/.codex/config.toml" || fail "comment directly above an agentos header deleted by a second --update"
+cmp -s "$h/.codex/config.toml" "$d/codex.once" || { diff "$d/codex.once" "$h/.codex/config.toml"; fail "--update not idempotent"; }
 grep -qx 'mine /opt/mine' "$d/claude" && grep -qx 'agentos-ci /usr/local/bin/agentos-ci-mcp' "$d/claude" || fail "claude --update: $(cat "$d/claude")"
 jq -e '.mcp.mine.command == ["/opt/mine"] and .theme == "dark" and .mcp["agentos-ci"] == {type: "local", command: ["/usr/local/bin/agentos-ci-mcp"], enabled: true}' \
   "$h/.config/opencode/opencode.json" >/dev/null || fail "opencode --update"
