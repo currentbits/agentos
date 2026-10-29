@@ -319,39 +319,54 @@ def killpg(pgid, sig) -> None:
         pass
 
 
-def pump_log(src, logf, cap) -> None:
-    """Copy a step's stdout+stderr pipe into its log file, up to cap bytes. Past the cap, stop
-    writing (one truncation line, then silence) but keep draining src so the step itself never
-    blocks on a full pipe buffer -- it keeps running, just unlogged past that point."""
+def pump_log(src, log_path, cap) -> None:
+    """Copy a step's stdout+stderr pipe into its log file, up to cap bytes, as the step runs.
+
+    Uses os.read() on the raw fd, not BufferedReader.read(): the latter blocks until it has a full
+    64 KiB chunk or hits EOF, so a step's early output would sit invisible until it finished or
+    wrote 64 KiB -- `logs --follow`, the web UI's live tail and MCP polling would all show nothing
+    while a step runs. os.read() returns as soon as any data at all is available.
+
+    Opens (and closes) the log file itself here, instead of sharing the caller's handle: a
+    lingering detached grandchild can keep its end of the pipe open well past run_step()'s own
+    timeout on joining this thread, so this thread can still be running -- and about to write --
+    after the caller moves on. With its own handle that race can't write into an already-closed
+    file (append mode makes the caller's own occasional write, e.g. a timeout note, safe to
+    interleave with this thread's).
+
+    Past the cap, stop writing (one truncation line, then silence) but keep draining src so the
+    step itself never blocks on a full pipe buffer -- it keeps running, just unlogged past that
+    point."""
     written = 0
     truncated = False
     try:
-        while True:
-            chunk = src.read(65536)
-            if not chunk:
-                return
-            if truncated:
-                continue
-            room = cap - written
-            if len(chunk) > room:
-                if room > 0:
-                    logf.write(chunk[:room])
-                logf.write(f"\n[agentos-ci: log truncated at {cap} bytes]\n".encode())
+        with open(log_path, "ab") as logf:
+            while True:
+                chunk = os.read(src.fileno(), 65536)
+                if not chunk:
+                    return
+                if truncated:
+                    continue
+                room = cap - written
+                if len(chunk) > room:
+                    if room > 0:
+                        logf.write(chunk[:room])
+                    logf.write(f"\n[agentos-ci: log truncated at {cap} bytes]\n".encode())
+                    logf.flush()
+                    truncated = True
+                    continue
+                logf.write(chunk)
                 logf.flush()
-                truncated = True
-                continue
-            logf.write(chunk)
-            logf.flush()
-            written += len(chunk)
+                written += len(chunk)
     finally:
         src.close()
 
 
-def run_step(argv, env, cwd, logf, deadline, stop, pgid_file) -> tuple:
+def run_step(argv, env, cwd, log_path, deadline, stop, pgid_file) -> tuple:
     """Run one step in its own process group. Returns (exit code, None | "cancelled" | "timeout")."""
     p = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                          stderr=subprocess.STDOUT, start_new_session=True)
-    pump = threading.Thread(target=pump_log, args=(p.stdout, logf, max_log()), daemon=True)
+    pump = threading.Thread(target=pump_log, args=(p.stdout, log_path, max_log()), daemon=True)
     pump.start()
     pgid_file.write_text(f"{p.pid}\n")
     reason, termed_at = None, None
@@ -387,6 +402,26 @@ def checkout(repo, commit, work) -> None:
 def finish(run, status) -> None:
     run.update(status=status, finished=now())
     save(run)
+
+
+def cleanup_work(work: Path, image) -> None:
+    """Remove a run's checkout. Container steps ran as root: their files in the checkout are
+    root-owned, and the agent user can't remove those directly -- delete them first, as root, via
+    the run's own image (ponytail: simpler than a --user mapping, which breaks images that expect
+    to run as root). --entrypoint overrides the image's own ENTRYPOINT, so "find ..." runs instead
+    of it.
+
+    Shared by the worker's own cleanup and cancel()'s SIGKILL fallback: the latter kills the worker
+    out from under it, so the worker's own `finally` below never gets to run at all -- the fallback
+    has to redo this itself, or an image: run's root-owned files are left behind for good. Best
+    effort either way: a docker failure here must never block finishing the run."""
+    if image and work.exists():
+        try:
+            subprocess.run(["docker", "run", "--rm", "--entrypoint", "find", "-v", f"{work}:/w", image,
+                           "/w", "-mindepth", "1", "-delete"], capture_output=True, timeout=60)
+        except (subprocess.SubprocessError, OSError):
+            pass
+    shutil.rmtree(work, ignore_errors=True)
 
 
 def worker(run_id) -> None:
@@ -427,9 +462,10 @@ def worker(run_id) -> None:
             st.update(status="running", started=now())
             save(run)
             argv, container = command(p, step, work, run_id, n)
-            with open(d / f"{step.name}.log", "ab") as logf:
-                code, reason = run_step(argv, env, work, logf, deadline, stop, d / "pgid")
-                if reason == "timeout":
+            log_path = d / f"{step.name}.log"
+            code, reason = run_step(argv, env, work, log_path, deadline, stop, d / "pgid")
+            if reason == "timeout":
+                with open(log_path, "ab") as logf:
                     logf.write(f"\n[agentos-ci: run timed out after {p.timeout_s}s]\n".encode())
             if container and reason:
                 subprocess.run(["docker", "rm", "-f", container], capture_output=True)
@@ -445,13 +481,7 @@ def worker(run_id) -> None:
         run["error"] = str(e)
         finish(run, "error")
     finally:
-        if image and work.exists():
-            # Container steps ran as root: their files in the checkout are root-owned. ponytail: clean
-            # up with the run's own image instead of a --user mapping that breaks images expecting root.
-            # --entrypoint overrides the image's own ENTRYPOINT, so "find ..." runs instead of it.
-            subprocess.run(["docker", "run", "--rm", "--entrypoint", "find", "-v", f"{work}:/w", image,
-                           "/w", "-mindepth", "1", "-delete"], capture_output=True)
-        shutil.rmtree(work, ignore_errors=True)
+        cleanup_work(work, image)
 
 
 def status(run_id) -> dict:
@@ -506,13 +536,19 @@ def cancel(run_id) -> dict:
         if g:
             killpg(g, signal.SIGKILL)
     run = load(run_id)
-    shutil.rmtree(work_root() / run_id, ignore_errors=True)
-    if run.get("image"):
-        for n in range(len(run.get("steps") or [])):
-            subprocess.run(["docker", "rm", "-f", f"agentos-ci-{run_id}-{n}"], capture_output=True)
     if run["status"] not in FINAL:
+        # Finalize before attempting any cleanup below: a failed cleanup (docker gone, timed out,
+        # whatever) must never leave the run stuck "running" with nothing left to ever finish it.
         run["error"] = "the worker did not stop; killed"
         finish(run, "cancelled")
+    try:
+        if run.get("image"):
+            for n in range(len(run.get("steps") or [])):
+                subprocess.run(["docker", "rm", "-f", f"agentos-ci-{run_id}-{n}"],
+                               capture_output=True, timeout=10)
+        cleanup_work(work_root() / run_id, run.get("image"))
+    except (subprocess.SubprocessError, OSError):
+        pass                        # best effort: the run is already finished above
     return run
 
 

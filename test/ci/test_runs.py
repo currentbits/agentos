@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 
 import pytest
-from conftest import ci_yml, make_repo, sh, wait_final
+from conftest import ci_yml, make_repo, sh, wait_final, wait_until_execed
 from agentos_ci import pipeline, runs
 from agentos_ci.runs import CIError
 
@@ -119,6 +119,25 @@ def test_queue_respects_max_parallel(home, monkeypatch):
     assert ra["status"] == rb["status"] == "passed" and rb["started"] >= ra["finished"]
 
 
+def test_live_log_streams_while_step_still_running(home):
+    # Regression guard: pump_log() used to read with a plain BufferedReader.read(n), which blocks
+    # until it has n (64 KiB) bytes or hits EOF -- so a step's early, small output wouldn't reach
+    # the log file until the step exited (or wrote 64 KiB). `logs --follow`, the web UI's live tail
+    # and MCP polling would all show nothing while a step ran. The deadline below (4s) is well
+    # under the step's own 5s sleep, so this fails on the old code (the log stays empty until the
+    # step exits around 5s) and passes promptly on the fix (os.read() returns as soon as "X\n" is
+    # written, long before the deadline).
+    repo = make_repo(home / "r", {".agentos/ci.yml": ci_yml(("s", "echo X; sleep 5"))})
+    rid = runs.start(repo)
+    deadline = time.monotonic() + 4
+    # step=None (not "s"): the step may not exist in run["steps"] yet right after start().
+    while "X" not in runs.logs(rid, None)["text"] and time.monotonic() < deadline:
+        time.sleep(0.1)
+    assert "X" in runs.logs(rid, None)["text"]
+    assert runs.status(rid)["status"] == "running"      # still mid-step, not caught by EOF at exit
+    runs.cancel(rid)
+
+
 def test_cancel_kills_the_process_group(home):
     pidfile = home / "child.pid"
     # bash -c runs without job control, so a background grandchild stays in the step's process
@@ -159,12 +178,18 @@ def test_step_gets_default_sigterm_disposition(home, monkeypatch):
     # SIG_IGN through the fork/exec chain from _spawn. If it did, the step would ignore cancel's
     # first TERM and cancel() would have to wait out the whole KILL_GRACE before its own fallback
     # SIGKILL, instead of the step just dying promptly.
+    #
+    # run["status"] == "running" is set by the worker before checkout and before "steps" even
+    # exists (see worker()): waiting for that alone lets this test cancel before the step process
+    # was ever started, so it would pass even with the bug this guards against. Wait for a marker
+    # the step itself writes instead, and assert it actually appeared.
     monkeypatch.setenv("AGENTOS_CI_KILL_GRACE", "30")
-    repo = make_repo(home / "r", {".agentos/ci.yml": ci_yml(("s", "sleep 300"))})
+    repo = make_repo(home / "r", {".agentos/ci.yml": ci_yml(("s", "echo ready; sleep 300"))})
     rid = runs.start(repo)
     deadline = time.monotonic() + 15
-    while runs.status(rid)["status"] != "running" and time.monotonic() < deadline:
+    while "ready" not in runs.logs(rid, None)["text"] and time.monotonic() < deadline:
         time.sleep(0.1)
+    assert "ready" in runs.logs(rid, None)["text"]
     t = time.monotonic()
     run = runs.cancel(rid)
     elapsed = time.monotonic() - t
@@ -174,9 +199,13 @@ def test_step_gets_default_sigterm_disposition(home, monkeypatch):
 
 def test_cancel_fallback_cleans_up_work_and_container(home, monkeypatch):
     # Force cancel()'s own SIGKILL-fallback path (a worker that never reacts to SIGTERM at all)
-    # and check it redoes the worker's cleanup: drop the checkout, and for an image: pipeline,
-    # force-remove the step's container -- neither of which the worker's own `finally`/`if
-    # container and reason` code ever gets to run when it is killed out from under it.
+    # and check it redoes the worker's cleanup: drop the checkout (via the shared cleanup_work()
+    # helper -- for an image: pipeline that means docker-deleting any root-owned files first, see
+    # test_cancel_fallback_removes_root_owned_files_from_an_image_pipeline below for the real-docker
+    # version of that), and for an image: pipeline, force-remove the step's container -- neither of
+    # which the worker's own `finally`/`if container and reason` code ever gets to run when it is
+    # killed out from under it. docker itself is mocked here (no real docker required): this is the
+    # "assert the helper is called" half of that coverage.
     monkeypatch.setenv("AGENTOS_CI_KILL_GRACE", "1")
     rid = "20260101-000000-0001"
     d = home / ".local/share/agentos-ci/runs" / rid
@@ -189,11 +218,12 @@ def test_cancel_fallback_cleans_up_work_and_container(home, monkeypatch):
     (d / "run.json").write_text(json.dumps(run))
     stuck = subprocess.Popen(["bash", "-c", "trap '' TERM; sleep 60"], start_new_session=True)
     (d / "pid").write_text(f"{stuck.pid}\n")
+    wait_until_execed(stuck.pid)       # don't race bash's own default SIGTERM disposition before its trap takes effect
     calls = []
     real_run = subprocess.run
 
     def fake_run(argv, *a, **k):
-        if argv[:2] == ["docker", "rm"]:
+        if argv[:2] in (["docker", "rm"], ["docker", "run"]):
             calls.append(argv)
             return subprocess.CompletedProcess(argv, 0)
         return real_run(argv, *a, **k)
@@ -206,7 +236,70 @@ def test_cancel_fallback_cleans_up_work_and_container(home, monkeypatch):
         stuck.wait()
     assert result["status"] == "cancelled" and "killed" in result["error"]
     assert not work.exists()
-    assert calls == [["docker", "rm", "-f", f"agentos-ci-{rid}-0"]]
+    assert calls == [["docker", "rm", "-f", f"agentos-ci-{rid}-0"],
+                     ["docker", "run", "--rm", "--entrypoint", "find", "-v", f"{work}:/w", "node:24",
+                      "/w", "-mindepth", "1", "-delete"]]
+
+
+def test_cancel_fallback_removes_root_owned_files_from_an_image_pipeline(home, monkeypatch):
+    # The real-docker counterpart to the mocked test above: an image: step runs as root, so it can
+    # leave root-owned (even chmod-000) files in the checkout that the agent user running cancel()
+    # can't rmtree -- cleanup_work() has to delete them as root first, via the same image. Skips
+    # (rather than fails) if docker isn't actually usable here.
+    monkeypatch.setenv("AGENTOS_CI_KILL_GRACE", "1")
+    rid = "20260101-000000-0004"
+    d = home / ".local/share/agentos-ci/runs" / rid
+    d.mkdir(parents=True)
+    work = home / ".cache/agentos-ci/work" / rid
+    work.mkdir(parents=True)
+    try:
+        subprocess.run(["docker", "run", "--rm", "-v", f"{work}:/w", "busybox", "sh", "-c",
+                       "touch /w/root-owned && chmod 000 /w/root-owned"],
+                       check=True, capture_output=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        pytest.skip("docker (busybox) not usable here")
+    run = {"id": rid, "status": "running", "image": "busybox", "error": None,
+           "steps": [{"name": "s", "status": "running", "exit_code": None, "started": "x", "finished": None}]}
+    (d / "run.json").write_text(json.dumps(run))
+    stuck = subprocess.Popen(["bash", "-c", "trap '' TERM; sleep 60"], start_new_session=True)
+    (d / "pid").write_text(f"{stuck.pid}\n")
+    wait_until_execed(stuck.pid)       # don't race bash's own default SIGTERM disposition before its trap takes effect
+    try:
+        result = runs.cancel(rid)
+    finally:
+        stuck.kill()
+        stuck.wait()
+        subprocess.run(["docker", "rm", "-f", f"agentos-ci-{rid}-0"], capture_output=True)
+    assert result["status"] == "cancelled"
+    assert not work.exists()           # a plain rmtree alone could not have removed this
+
+
+def test_cancel_fallback_finishes_even_if_cleanup_fails(home, monkeypatch):
+    # Regression guard: a failed cleanup (docker gone, timed out, whatever) must never leave the
+    # run stuck "running" -- cancel()'s fallback finalizes the run before attempting any of it.
+    monkeypatch.setenv("AGENTOS_CI_KILL_GRACE", "1")
+    rid = "20260101-000000-0005"
+    d = home / ".local/share/agentos-ci/runs" / rid
+    d.mkdir(parents=True)
+    work = home / ".cache/agentos-ci/work" / rid
+    work.mkdir(parents=True)
+    run = {"id": rid, "status": "running", "image": "node:24", "error": None,
+           "steps": [{"name": "s", "status": "running", "exit_code": None, "started": "x", "finished": None}]}
+    (d / "run.json").write_text(json.dumps(run))
+    stuck = subprocess.Popen(["bash", "-c", "trap '' TERM; sleep 60"], start_new_session=True)
+    (d / "pid").write_text(f"{stuck.pid}\n")
+    wait_until_execed(stuck.pid)       # don't race bash's own default SIGTERM disposition before its trap takes effect
+
+    def boom(*a, **k):
+        raise OSError("docker is unavailable")
+
+    monkeypatch.setattr(runs.subprocess, "run", boom)
+    try:
+        result = runs.cancel(rid)
+    finally:
+        stuck.kill()
+        stuck.wait()
+    assert result["status"] == "cancelled" and "killed" in result["error"]
 
 
 def test_step_log_is_capped_and_step_keeps_running(home, monkeypatch):

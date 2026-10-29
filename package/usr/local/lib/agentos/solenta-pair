@@ -47,7 +47,10 @@ status() {
   ts=$("${TAILSCALE:-tailscale}" status --json 2>/dev/null) || ts='{}'
   dns=$(jq -r '.Self.DNSName // "" | rtrimstr(".")' <<< "$ts" 2>/dev/null) || dns=
   ip=$(jq -r '.Self.TailscaleIPs[0] // ""' <<< "$ts" 2>/dev/null) || ip=
-  host=${dns:-${ip:-$(cat "$HOSTNAME_FILE" 2>/dev/null || echo localhost)}}
+  # || true: under set -e, a failing command substitution (a missing hostname file) would abort
+  # the whole function right here, before the ${host:-localhost} fallback below ever runs.
+  host=${dns:-${ip:-$(cat "$HOSTNAME_FILE" 2>/dev/null || true)}}
+  host=${host:-localhost}          # dns/ip empty (no tailscale) and an empty or unreadable hostname file
   # tailscaled lists SSH host keys for a node only while Tailscale SSH serves it.
   tsssh=$(jq '(.Self.sshHostKeys // .Self.SSH_HostKeys // []) | length > 0' <<< "$ts" 2>/dev/null) || tsssh=false
   keys=$(for f in "$SSH_DIR"/ssh_host_*_key.pub; do

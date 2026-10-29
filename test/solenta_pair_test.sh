@@ -60,4 +60,17 @@ out=$(HOME=$h PATH="$d/fake:$PATH" TAILSCALE="$d/fake/tailscale-empty" AGENTOS_H
   fail "status aborted with no tailscale host"
 jq -e '.host == "my-fallback-host" and .remoteHost == "agent@my-fallback-host"' <<< "$out" >/dev/null ||
   fail "hostname fallback: $out"
+
+# An empty (or missing) hostname file must not give an empty host: fall back to "localhost".
+: > "$d/hostname-file"
+out=$(HOME=$h PATH="$d/fake:$PATH" TAILSCALE="$d/fake/tailscale-empty" AGENTOS_HOSTNAME_FILE="$d/hostname-file" \
+      AGENTOS_SSH_DIR="$d/ssh" AGENTOS_WRAPPER="$W" AGENTOS_PREFLIGHT_PATH="$d/bin:$d/real:/usr/bin:/bin" "$P" status) ||
+  fail "status aborted with an empty hostname file"
+jq -e '.host == "localhost" and .remoteHost == "agent@localhost"' <<< "$out" >/dev/null ||
+  fail "empty hostname file fallback: $out"
+out=$(HOME=$h PATH="$d/fake:$PATH" TAILSCALE="$d/fake/tailscale-empty" AGENTOS_HOSTNAME_FILE="$d/no-such-file" \
+      AGENTOS_SSH_DIR="$d/ssh" AGENTOS_WRAPPER="$W" AGENTOS_PREFLIGHT_PATH="$d/bin:$d/real:/usr/bin:/bin" "$P" status) ||
+  fail "status aborted with a missing hostname file"
+jq -e '.host == "localhost" and .remoteHost == "agent@localhost"' <<< "$out" >/dev/null ||
+  fail "missing hostname file fallback: $out"
 echo "solenta-pair OK"

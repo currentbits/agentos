@@ -137,7 +137,7 @@ begin() {  # lock (both: this run's own, and the one a concurrent check waits on
   # Either lock only ever briefly held by something else (another update/rollback finishing up, or
   # a check): wait for it rather than giving up immediately.
   flock -w 60 9 || { echo "agentos-update is already running" >&2; exit 3; }
-  flock -w 60 8 || { flock -u 9; echo "agentos-update is already running" >&2; exit 3; }
+  flock -w 60 8 || { flock -u 9; echo "an update check is running, try again shortly" >&2; exit 3; }
   # Started from the web UI, this process outlives agentos-web's restart (KillMode=process), but its
   # stdout then has no reader: ignore SIGPIPE and keep going; the web UI reads $ULOG instead.
   trap '' PIPE
@@ -146,11 +146,16 @@ begin() {  # lock (both: this run's own, and the one a concurrent check waits on
   trap 'rm -f "$LOG"' EXIT
   say "== agentos-update $* $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }
-finish() {  # unlock both, refresh update.json (and the console/MOTD notice), report
-  flock -u 9
+finish() {  # refresh update.json (and the console/MOTD notice), report, unlock both
+  # Release only the check-lock before the self-check: it only ever takes that lock (see check()),
+  # so releasing it here can't deadlock against it, and a concurrent check() is freed to run
+  # immediately instead of waiting out our own self-check too. The update-lock stays held until
+  # "== done" is actually written, so the web UI's "running" probe (which watches only that lock)
+  # keeps reporting this run as running for its entire duration, including the self-check.
   flock -u 8
   sudo -n "$0" --check >/dev/null 2>&1 || true
   say "== done: $([ "$FAILED" = 0 ] && echo ok || echo 'with failures')"
+  flock -u 9
   exit "$FAILED"
 }
 

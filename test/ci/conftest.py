@@ -37,6 +37,29 @@ def make_repo(path: Path, files: dict) -> Path:
     return path
 
 
+def wait_until_execed(pid, timeout=5):
+    """Block until `pid` is no longer the bash process itself.
+
+    Tests that simulate a stuck worker spawn `bash -c "trap '' TERM; sleep N"`: bash forks, runs
+    the trap builtin (installing real SIG_IGN, which survives exec), then execs directly into
+    `sleep` as its last command -- replacing its own image, keeping the same pid. Sending SIGTERM
+    in the (brief but real) gap before that exec finishes hits bash's own, still-default,
+    disposition instead of the trap, killing it outright -- a race observed in practice on real
+    VMs, not just a theoretical one. Linux only (no /proc on macOS, same as runs.alive()); falls
+    back to a short fixed wait there."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            comm = open(f"/proc/{pid}/stat").read().split("(", 1)[1].rsplit(")", 1)[0]
+        except OSError:
+            time.sleep(0.3)
+            return
+        if comm != "bash":
+            return
+        time.sleep(0.01)
+    raise AssertionError(f"pid {pid} still bash after {timeout}s")
+
+
 def wait_final(run_id, timeout=60):
     from agentos_ci import runs
     deadline = time.monotonic() + timeout
