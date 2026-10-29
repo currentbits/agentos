@@ -14,7 +14,7 @@ while read -r _old new ref; do
     continue
   fi
   branch=${ref#refs/heads/}
-  if id=$("$CI" run --source push --ref "$ref" -- "$repo"); then
+  if id=$("$CI" run --source push --ref "$ref" -- "$repo" </dev/null); then
     echo "agentos-ci: run $id for $branch (agentos-ci logs $id --follow)"
   else
     echo "agentos-ci: could not start a run for $branch"

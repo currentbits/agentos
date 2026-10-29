@@ -13,6 +13,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -23,6 +24,7 @@ ID_RE = re.compile(r"^\d{8}-\d{6}-[0-9a-f]{4}$")
 REF_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_./@^~{}-]{0,254}$")   # never starts with "-"
 KEEP = 200
 KILL_GRACE = 10
+MAX_LOG = 50 * 1024 * 1024  # per-step log cap; AGENTOS_CI_MAX_LOG overrides (tests only)
 BASE_PATH = "/usr/local/bin:/usr/bin:/bin"
 MAIN = str(Path(__file__).resolve().parent.parent / "main.py")
 
@@ -73,6 +75,16 @@ def kill_grace() -> int:
         return int(os.environ["AGENTOS_CI_KILL_GRACE"])
     except (KeyError, ValueError):
         return KILL_GRACE
+
+
+def max_log() -> int:
+    """Byte cap for one step's log file. AGENTOS_CI_MAX_LOG overrides it, for tests only (start()
+    forwards it to the worker the same way as AGENTOS_CI_MAX_PARALLEL)."""
+    try:
+        n = int(os.environ["AGENTOS_CI_MAX_LOG"])
+        return n if n > 0 else MAX_LOG
+    except (KeyError, ValueError):
+        return MAX_LOG
 
 
 def git(*args, cwd=None, check=True) -> str:
@@ -206,7 +218,7 @@ def start(path, ref="HEAD", source="cli") -> str:
     # Double fork through `_spawn`, so the worker is nobody's child here: no zombie in a long-lived
     # caller (the MCP server, the web UI), and the worker outlives the push, the CLI and the session.
     env = {"HOME": str(home()), "PATH": BASE_PATH, "LANG": "C.UTF-8"}
-    for k in ("AGENTOS_CI_MAX_PARALLEL", "AGENTOS_CI_KILL_GRACE"):
+    for k in ("AGENTOS_CI_MAX_PARALLEL", "AGENTOS_CI_KILL_GRACE", "AGENTOS_CI_MAX_LOG"):
         if k in os.environ:
             env[k] = os.environ[k]
     try:
@@ -224,12 +236,16 @@ def start(path, ref="HEAD", source="cli") -> str:
 
 def spawn(run_id) -> None:
     d = run_dir(run_id)
+    # SIG_IGN (unlike a handler) survives both fork and exec: set it here, in this short-lived
+    # `_spawn` process, before Popen forks. fork() copies the disposition into the child
+    # immediately (no race, and no preexec_fn -- unsafe with threads per the subprocess docs), and
+    # it survives the child's exec into the worker, closing the window between fork and worker()
+    # installing its own handler, where a bare SIGTERM would otherwise kill the new process by
+    # default before it ever runs any of our code. `_spawn` exits right after, so this is never
+    # un-done for anything else in this process.
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
     with open(d / "worker.log", "ab") as log:
-        # SIG_IGN (unlike a handler) survives exec: closes the window between this fork and
-        # worker() installing its real handler, where a bare SIGTERM would otherwise kill the
-        # new process by default before it ever runs any of our code.
         p = subprocess.Popen([sys.executable, MAIN, "_worker", run_id], start_new_session=True,
-                             preexec_fn=lambda: signal.signal(signal.SIGTERM, signal.SIG_IGN),
                              stdin=subprocess.DEVNULL, stdout=log, stderr=log)
     (d / "pid").write_text(f"{p.pid}\n")
 
@@ -303,10 +319,40 @@ def killpg(pgid, sig) -> None:
         pass
 
 
+def pump_log(src, logf, cap) -> None:
+    """Copy a step's stdout+stderr pipe into its log file, up to cap bytes. Past the cap, stop
+    writing (one truncation line, then silence) but keep draining src so the step itself never
+    blocks on a full pipe buffer -- it keeps running, just unlogged past that point."""
+    written = 0
+    truncated = False
+    try:
+        while True:
+            chunk = src.read(65536)
+            if not chunk:
+                return
+            if truncated:
+                continue
+            room = cap - written
+            if len(chunk) > room:
+                if room > 0:
+                    logf.write(chunk[:room])
+                logf.write(f"\n[agentos-ci: log truncated at {cap} bytes]\n".encode())
+                logf.flush()
+                truncated = True
+                continue
+            logf.write(chunk)
+            logf.flush()
+            written += len(chunk)
+    finally:
+        src.close()
+
+
 def run_step(argv, env, cwd, logf, deadline, stop, pgid_file) -> tuple:
     """Run one step in its own process group. Returns (exit code, None | "cancelled" | "timeout")."""
-    p = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=logf, stderr=subprocess.STDOUT,
-                         start_new_session=True)
+    p = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                         stderr=subprocess.STDOUT, start_new_session=True)
+    pump = threading.Thread(target=pump_log, args=(p.stdout, logf, max_log()), daemon=True)
+    pump.start()
     pgid_file.write_text(f"{p.pid}\n")
     reason, termed_at = None, None
     while True:
@@ -323,7 +369,9 @@ def run_step(argv, env, cwd, logf, deadline, stop, pgid_file) -> tuple:
         elif termed_at is not None and t - termed_at > kill_grace():
             killpg(p.pid, signal.SIGKILL)
             termed_at = float("inf")
-    killpg(p.pid, signal.SIGKILL)          # whatever the step left behind in its group
+    killpg(p.pid, signal.SIGKILL)          # whatever the step left behind in its group (and its
+                                            # copy of the stdout pipe, so pump_log's read() can EOF)
+    pump.join(timeout=5)
     pgid_file.unlink(missing_ok=True)
     return code, reason
 
@@ -448,12 +496,20 @@ def cancel(run_id) -> dict:
             # own handler (see spawn()), so a single early TERM can be dropped, not just delayed.
             os.kill(pid, signal.SIGTERM)   # the worker TERMs its step's group, KILLs it 10 s later
         time.sleep(0.2)
-    # The worker is stuck or gone: kill what is left and record the cancel here.
+    # The worker is stuck or gone: kill what is left and record the cancel here. A SIGKILL here
+    # (unlike the worker's own TERM-then-KILL on its own step) gives the worker no chance to run
+    # its own cleanup, so redo it: drop the checkout, and for an image: pipeline, force-remove
+    # every step's container (`docker run --rm`'s cleanup is the client process noticing its own
+    # exit; it does nothing when that client is killed out from under it).
     for f in ("pgid", "pid"):
         g = read_int(d / f)
         if g:
             killpg(g, signal.SIGKILL)
     run = load(run_id)
+    shutil.rmtree(work_root() / run_id, ignore_errors=True)
+    if run.get("image"):
+        for n in range(len(run.get("steps") or [])):
+            subprocess.run(["docker", "rm", "-f", f"agentos-ci-{run_id}-{n}"], capture_output=True)
     if run["status"] not in FINAL:
         run["error"] = "the worker did not stop; killed"
         finish(run, "cancelled")
@@ -492,22 +548,14 @@ def logs(run_id, step=None, n=200) -> dict:
     return {"step": step, "text": tail(log_path(run, step), n)}
 
 
-def follow(run_id, step, out) -> None:
-    """Write the step's log to out as it grows; return once the run is final and the log drained."""
-    run = status(run_id)
-    step = step or default_step(run)
-    while step is None and run["status"] not in FINAL:
-        time.sleep(0.5)
-        run = status(run_id)
-        step = default_step(run)
-    if step is None:
-        out.write(run["error"] or "")
-        out.flush()
-        return
-    path = log_path(run, step)
+def _follow_step(run_id, step, out) -> None:
+    """Drain one step's log as it grows; return once that step is no longer pending/running, or
+    the run itself goes final (e.g. the worker died before ever marking the step done)."""
+    path = log_path(status(run_id), step)
     pos = 0
     while True:
-        final = status(run_id)["status"] in FINAL
+        run = status(run_id)
+        st = next((s for s in run["steps"] if s["name"] == step), None)
         try:
             with open(path, "rb") as f:
                 f.seek(pos)
@@ -518,10 +566,30 @@ def follow(run_id, step, out) -> None:
             pos += len(chunk)
             out.write(chunk.decode("utf-8", "replace"))
             out.flush()
-        elif final:
+        elif (st is None or st["status"] not in ("pending", "running")) or run["status"] in FINAL:
             return
         else:
             time.sleep(0.3)
+
+
+def follow(run_id, step, out) -> None:
+    """Write a step's log to out as it grows. With an explicit step, follow only that one until
+    it's done. With none, follow every step of the run, in order, moving to the next as soon as
+    the current one stops running -- not just whichever step happened to be "current" when this
+    was first called -- until the run itself is final."""
+    if step is not None:
+        _follow_step(run_id, step, out)
+        return
+    run = status(run_id)
+    while not run["steps"] and run["status"] not in FINAL:
+        time.sleep(0.5)
+        run = status(run_id)
+    if not run["steps"]:
+        out.write(run["error"] or "")
+        out.flush()
+        return
+    for st in run["steps"]:
+        _follow_step(run_id, st["name"], out)
 
 
 def wait(run_id, timeout_s=1800) -> dict:

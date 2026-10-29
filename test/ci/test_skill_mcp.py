@@ -43,6 +43,33 @@ def test_skill_install_kept_on_missing_end_marker(home, capsys):
     assert "malformed" in capsys.readouterr().err
 
 
+def test_skill_install_kept_on_end_before_begin(home, capsys):
+    skill.install()
+    codex = home / ".codex/AGENTS.md"
+    text = codex.read_text()
+    # Both markers present once each, but in the wrong order: a naive regex spanning BEGIN..END
+    # would swallow unrelated text in between. Must be left alone, not "fixed" by re-ordering.
+    swapped = text.replace(END, "\x00end\x00").replace(BEGIN, END).replace("\x00end\x00", BEGIN)
+    codex.write_text(swapped)
+    assert swapped.count(BEGIN) == 1 and swapped.count(END) == 1
+    assert swapped.index(END) < swapped.index(BEGIN)
+    res = skill.install()
+    assert res[".codex/AGENTS.md"] == "kept"
+    assert codex.read_text() == swapped
+    assert "malformed" in capsys.readouterr().err
+
+
+def test_skill_install_kept_on_orphan_end(home, capsys):
+    codex = home / ".codex/AGENTS.md"
+    codex.parent.mkdir(parents=True)
+    orphan = f"# notes\n{END}\nmore text\n"
+    codex.write_text(orphan)
+    res = skill.install()
+    assert res[".codex/AGENTS.md"] == "kept"
+    assert codex.read_text() == orphan
+    assert "malformed" in capsys.readouterr().err
+
+
 def test_skill_install_kept_on_duplicate_blocks(home, capsys):
     skill.install()
     codex = home / ".codex/AGENTS.md"

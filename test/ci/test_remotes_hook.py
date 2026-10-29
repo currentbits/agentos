@@ -1,6 +1,7 @@
 import os
 import stat
 import sys
+from pathlib import Path
 
 import pytest
 from conftest import CI_DIR, ci_yml, make_repo, sh, wait_final
@@ -26,6 +27,18 @@ def test_create_and_list(home, monkeypatch):
         remotes.create("demo-1")
     (home / "git/Bad.git").mkdir()
     assert [x["name"] for x in remotes.list_remotes()] == ["demo-1"]
+
+
+def test_create_removes_half_made_repo_on_hook_failure(home, monkeypatch):
+    # If the hook-symlink step fails after `git init`, a half-made repo must not be left behind
+    # (it would otherwise block every future `create("broken")` with "already exists" forever).
+    def boom(self, *a, **k):
+        raise OSError("disk exploded")
+
+    monkeypatch.setattr(Path, "symlink_to", boom)
+    with pytest.raises(OSError):
+        remotes.create("broken")
+    assert not (home / "git/broken.git").exists()
 
 
 def launcher(tmp_path, record=None):
@@ -55,6 +68,24 @@ def test_hook_runs_ci_per_branch_and_reports_the_id(home, tmp_path, monkeypatch)
         run = wait_final(rid)
         assert run["status"] == "passed" and run["source"] == "push" and run["repo"] == remote
     assert sorted(runs.status(i)["ref"] for i in ids) == ["refs/heads/again", "refs/heads/feature/x", "refs/heads/main"]
+
+
+def test_hook_closes_cis_stdin(home, tmp_path):
+    # post-receive's own `while read -r _old new ref` loop reads ref updates from its stdin; "$CI"
+    # must not share that pipe, or a descendant that reads stdin (even just once, even
+    # accidentally) could steal a line meant for the next ref, corrupting a multi-ref push.
+    f = tmp_path / "agentos-ci"
+    rec = tmp_path / "stdin-seen"
+    f.write_text(f'#!/bin/sh\nIFS= read -r line; printf "%s\\n" "${{line:-<empty>}}" >> {rec}\necho 20260101-000000-0000\n')
+    f.chmod(0o755)
+    remote = remotes.create("stdincheck")["path"]
+    src = make_repo(tmp_path / "src", {"a": "1"})
+    import subprocess
+    r = subprocess.run(["env", f"AGENTOS_CI={f}", "git", "push", remote, "main:refs/heads/one", "main:refs/heads/two"],
+                       cwd=src, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert r.stderr.count("agentos-ci: run ") == 2             # both refs reached the hook's loop
+    assert rec.read_text().splitlines() == ["<empty>", "<empty>"]
 
 
 def test_hook_never_evaluates_ref_names(home, tmp_path):

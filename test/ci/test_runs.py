@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import subprocess
 import time
 from pathlib import Path
 
@@ -152,12 +153,94 @@ def test_cancel_escalates_to_sigkill(home, monkeypatch):
     assert 0.9 <= elapsed < 6             # the worker's 1 s grace, well under cancel's own fallback (1 + 5 = 6s)
 
 
+def test_step_gets_default_sigterm_disposition(home, monkeypatch):
+    # Regression guard for spawn()'s SIG_IGN dance (an ignored signal survives exec): a step
+    # process must still see the ordinary default SIGTERM disposition (terminate), not inherit
+    # SIG_IGN through the fork/exec chain from _spawn. If it did, the step would ignore cancel's
+    # first TERM and cancel() would have to wait out the whole KILL_GRACE before its own fallback
+    # SIGKILL, instead of the step just dying promptly.
+    monkeypatch.setenv("AGENTOS_CI_KILL_GRACE", "30")
+    repo = make_repo(home / "r", {".agentos/ci.yml": ci_yml(("s", "sleep 300"))})
+    rid = runs.start(repo)
+    deadline = time.monotonic() + 15
+    while runs.status(rid)["status"] != "running" and time.monotonic() < deadline:
+        time.sleep(0.1)
+    t = time.monotonic()
+    run = runs.cancel(rid)
+    elapsed = time.monotonic() - t
+    assert run["status"] == "cancelled"
+    assert elapsed < 3
+
+
+def test_cancel_fallback_cleans_up_work_and_container(home, monkeypatch):
+    # Force cancel()'s own SIGKILL-fallback path (a worker that never reacts to SIGTERM at all)
+    # and check it redoes the worker's cleanup: drop the checkout, and for an image: pipeline,
+    # force-remove the step's container -- neither of which the worker's own `finally`/`if
+    # container and reason` code ever gets to run when it is killed out from under it.
+    monkeypatch.setenv("AGENTOS_CI_KILL_GRACE", "1")
+    rid = "20260101-000000-0001"
+    d = home / ".local/share/agentos-ci/runs" / rid
+    d.mkdir(parents=True)
+    work = home / ".cache/agentos-ci/work" / rid
+    work.mkdir(parents=True)
+    (work / "marker").write_text("x")
+    run = {"id": rid, "status": "running", "image": "node:24", "error": None,
+           "steps": [{"name": "s", "status": "running", "exit_code": None, "started": "x", "finished": None}]}
+    (d / "run.json").write_text(json.dumps(run))
+    stuck = subprocess.Popen(["bash", "-c", "trap '' TERM; sleep 60"], start_new_session=True)
+    (d / "pid").write_text(f"{stuck.pid}\n")
+    calls = []
+    real_run = subprocess.run
+
+    def fake_run(argv, *a, **k):
+        if argv[:2] == ["docker", "rm"]:
+            calls.append(argv)
+            return subprocess.CompletedProcess(argv, 0)
+        return real_run(argv, *a, **k)
+
+    monkeypatch.setattr(runs.subprocess, "run", fake_run)
+    try:
+        result = runs.cancel(rid)
+    finally:
+        stuck.kill()
+        stuck.wait()
+    assert result["status"] == "cancelled" and "killed" in result["error"]
+    assert not work.exists()
+    assert calls == [["docker", "rm", "-f", f"agentos-ci-{rid}-0"]]
+
+
+def test_step_log_is_capped_and_step_keeps_running(home, monkeypatch):
+    monkeypatch.setenv("AGENTOS_CI_MAX_LOG", "1000")
+    script = "head -c 200000 /dev/zero > bigfile; cat bigfile; echo DONE-MARKER"
+    repo = make_repo(home / "r", {".agentos/ci.yml": ci_yml(("s", script))})
+    run = wait_final(runs.start(repo))
+    assert run["status"] == "passed"                 # truncated, not killed: the step kept running
+    assert [s["exit_code"] for s in run["steps"]] == [0]
+    text = runs.logs(run["id"], "s", n=10**9)["text"]
+    assert "log truncated at 1000 bytes" in text
+    assert "DONE-MARKER" not in text                  # written well past the cap: discarded
+    assert len(text.encode()) < 1100
+
+
 def test_cancel_a_queued_run(home, monkeypatch):
     monkeypatch.setenv("AGENTOS_CI_MAX_PARALLEL", "1")
     repo = make_repo(home / "r", {".agentos/ci.yml": ci_yml(("s", "sleep 3"))})
     a, b = runs.start(repo), runs.start(repo)
     assert runs.cancel(b)["status"] == "cancelled" and runs.status(b)["steps"] == []
     assert wait_final(a)["status"] == "passed"
+
+
+def test_follow_without_step_follows_every_step_in_order(home):
+    import io
+    # Regression guard: follow(run_id, None, ...) used to lock onto whichever step was "current"
+    # when first called and never move on, so a run with more than one step lost everything after
+    # the first in the followed output.
+    repo = make_repo(home / "r", {".agentos/ci.yml": ci_yml(("one", "echo A; sleep 0.3"), ("two", "echo B"))})
+    rid = runs.start(repo)
+    buf = io.StringIO()
+    runs.follow(rid, None, buf)
+    assert wait_final(rid)["status"] == "passed"
+    assert buf.getvalue() == "A\nB\n"
 
 
 def test_timeout_kills_the_step(home):

@@ -1,6 +1,7 @@
 """Push remotes: bare repos in ~/git/<name>.git whose post-receive hook starts a run per pushed branch."""
 import json
 import re
+import shutil
 import socket
 import subprocess
 from pathlib import Path
@@ -37,9 +38,13 @@ def create(name) -> dict:
         raise CIError(f"{path} already exists")
     git_root().mkdir(parents=True, exist_ok=True)
     git("init", "--quiet", "--bare", str(path))
-    hook = path / "hooks" / "post-receive"
-    hook.unlink(missing_ok=True)
-    hook.symlink_to(HOOK)                  # shared hook: image updates reach every remote
+    try:
+        hook = path / "hooks" / "post-receive"
+        hook.unlink(missing_ok=True)
+        hook.symlink_to(HOOK)               # shared hook: image updates reach every remote
+    except OSError:
+        shutil.rmtree(path, ignore_errors=True)   # don't leave a half-made repo behind
+        raise
     return {"name": name, "path": str(path), "remote_add": remote_add(name, box_host())}
 
 
