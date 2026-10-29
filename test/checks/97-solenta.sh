@@ -88,7 +88,7 @@ check_solenta_backoff_recovers_without_resetfailed() {
 check_solenta_skips_when_port_taken() {
   # Solenta's own nohup copy already serves 4620: the unit stays out of the way (no restart loop).
   local rc=0
-  solenta_install_stub && vm 'sudo systemctl stop agentos-solenta.service &&
+  solenta_install_stub && vm 'sudo systemctl stop agentos-solenta.path agentos-solenta.service &&
     for _ in $(seq 1 20); do pgrep -f "http.server 4620" >/dev/null || break; sleep 0.5; done &&
     ! pgrep -f "http.server 4620" >/dev/null &&
     (setsid python3 -m http.server 4620 --bind 127.0.0.1 </dev/null >/dev/null 2>&1 &) &&
