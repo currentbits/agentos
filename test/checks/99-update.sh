@@ -112,9 +112,19 @@ check_update_end_to_end() {
   webpid=$(vm 'systemctl show -p MainPID --value agentos-web.service')
 
   # Update through the web UI: the stream ends when agentos-web restarts; the run goes on (its log).
+  # "running" (the update lock) can go false a moment before finish()'s own self-check finishes
+  # and appends "== done" -- both locks are released, then the self-check runs, then that line is
+  # logged -- so wait for the log to actually say "== done", not just for running to flip, or an
+  # unlucky poll can land in that gap and see a log that looks merely cut off mid-run.
   vm "$WEB"'node /tmp/web_ws.mjs update >/tmp/upd-stream.txt 2>&1; up &&
-    for _ in $(seq 1 900); do w $U/api/update/log | jq -e ".running == false" >/dev/null && break; sleep 2; done &&
-    w $U/api/update/log | jq -r .text > /tmp/upd.log && grep -qx "ok    agentos" /tmp/upd.log && grep -q "^== done" /tmp/upd.log' || {
+    for _ in $(seq 1 900); do
+      w $U/api/update/log > /tmp/upd-log.json &&
+      jq -e ".running == false" /tmp/upd-log.json >/dev/null &&
+      jq -r .text /tmp/upd-log.json > /tmp/upd.log &&
+      grep -q "^== done" /tmp/upd.log && break
+      sleep 2
+    done &&
+    grep -qx "ok    agentos" /tmp/upd.log && grep -q "^== done" /tmp/upd.log' || {
     rc=1; vm 'cat /tmp/upd-stream.txt /tmp/upd.log 2>/dev/null | tail -40'; }
 
   vm "$WEB"'test "$(agentos-update --version)" = "'"$n1"'" &&
