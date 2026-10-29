@@ -61,6 +61,13 @@ it('shows the versions, the notes as plain text and the CI warning; "Check now" 
   expect(post[1]).toMatchObject({ method: 'POST', headers: { 'X-AgentOS': '1' } });
 });
 
+it('never shows the CI warning when no update is available', async () => {
+  stubFetch({ ...STATE, available: null, ciActive: ['20261029-101500-0001'] });
+  render(<System me={null} />);
+  await screen.findByText(/up to date/);
+  expect(screen.queryByText(/CI runs in progress/)).toBeNull();
+});
+
 it('shows a failed check as a warning, never as "up to date"', async () => {
   stubFetch({ ...STATE, available: null, error: 'Failed to fetch https://o.github.io/r/apt/dists/stable/InRelease  Missing key 0123ABCD' });
   render(<System me={null} />);

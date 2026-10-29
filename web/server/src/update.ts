@@ -8,7 +8,7 @@ import { HttpError } from './run.js';
 
 export interface UpdateState {
   installed: string | null; available: string | null; notes_url: string | null; notes: string;
-  checked_at: string | null; error: string | null; running: boolean; ciActive: string[];
+  checked_at: string | null; error: string | null; running: boolean; ciActive: string[] | null;
 }
 
 const VERSION_RE = /^[0-9][A-Za-z0-9.+~]*$/;   // agentos-update's own check, again
@@ -27,33 +27,50 @@ async function tail(path: string, max: number): Promise<string> {
   } catch { return ''; }
 }
 
+// flock -n exits 1 only when it couldn't get the lock (it's held); any other exit (a bad flock
+// invocation, the binary missing) is not "running", just a broken probe.
 async function running(deps: Deps): Promise<boolean> {
-  return (await runAction(deps.run, { name: 'update-running' })).code !== 0;
+  return (await runAction(deps.run, { name: 'update-running' })).code === 1;
 }
 
 // update.json is untrusted text (the notes come from the repo): only known fields, typed and capped.
-// The UI renders the notes as plain text.
+// The UI renders the notes as plain text. A corrupt file (wrong types, non-JSON, a mangled
+// `available`) must never read as "up to date": `error` is keyed off the validated `checked_at`,
+// and a present-but-invalid `available` reports its own error instead of silently becoming null.
 export async function updateState(deps: Deps): Promise<UpdateState> {
   let j: Record<string, unknown> = {};
   try { j = JSON.parse(await tail(deps.updateState, 64 * 1024)) ?? {}; } catch { /* not checked yet */ }
+  const rawAvailable = j.available;
+  const availableStr = str(rawAvailable, 64);
+  const available = availableStr && VERSION_RE.test(availableStr) ? availableStr : null;
+  // Only poll agentos-ci (a 60 s action) when there's actually an update to warn about restarting
+  // for: on an up-to-date box this just adds load and an "agentos-web restarts" warning that never
+  // applies.
   const [ver, isRunning, ci] = await Promise.all([
     runAction(deps.run, { name: 'update-version' }),
     running(deps),
-    runAction(deps.run, { name: 'ci-list', limit: 200 }, { timeoutMs: 60_000 }),
+    available ? runAction(deps.run, { name: 'ci-list', limit: 200 }, { timeoutMs: 60_000 }) : Promise.resolve(null),
   ]);
-  let ciActive: string[] = [];
-  try {
-    ciActive = (JSON.parse(ci.stdout) as { id: string; status: string }[])
-      .filter((r) => r.status === 'running' || r.status === 'queued').map((r) => String(r.id));
-  } catch { /* agentos-ci unavailable: no warning */ }
-  const available = str(j.available, 64);
+  let ciActive: string[] | null = null;
+  if (ci) {
+    try {
+      ciActive = (JSON.parse(ci.stdout) as { id: string; status: string }[])
+        .filter((r) => r.status === 'running' || r.status === 'queued').map((r) => String(r.id));
+    } catch { ciActive = []; /* agentos-ci unavailable: no warning */ }
+  }
+  const checkedAt = str(j.checked_at, 64);
+  const availablePresent = rawAvailable !== undefined && rawAvailable !== null;
+  const errFromFile = str(j.error, 512);
   return {
     installed: ver.code === 0 ? ver.stdout.trim() || null : null,
-    available: available && VERSION_RE.test(available) ? available : null,
+    available,
     notes_url: str(j.notes_url, 512),
     notes: str(j.notes, 4096) ?? '',
-    checked_at: str(j.checked_at, 64),
-    error: j.checked_at ? str(j.error, 512) : 'not checked yet',
+    checked_at: checkedAt,
+    error: !checkedAt ? 'not checked yet'
+      : errFromFile !== null ? errFromFile
+        : availablePresent && !available ? 'invalid version in update.json'
+          : null,
     running: isRunning,
     ciActive,
   };

@@ -29,7 +29,7 @@ function page(path: string, me: Me | null) {
 export function App() {
   const path = usePath();
   const { data: me } = usePoll(() => api<Me>('/api/me'));
-  const { data: update } = usePoll(() => api<UpdateState>('/api/update'));
+  const { data: update } = usePoll(() => api<UpdateState>('/api/update'), 300000);
   const section = '/' + (path.split('/')[1] ?? '');
   return (
     <div className="layout">

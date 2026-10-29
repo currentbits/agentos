@@ -38,7 +38,7 @@ export function UpdateCard() {
           </p>
           {s.checked_at && <p className="hint">Last check: {new Date(s.checked_at).toLocaleString()}</p>}
           {s.available && s.notes && <pre className="notes">{s.notes}</pre>}
-          {s.ciActive.length > 0 && (
+          {s.available && s.ciActive && s.ciActive.length > 0 && (
             <p className="bad">CI runs in progress: {s.ciActive.join(', ')}. They keep running, but agentos-web restarts during the update.</p>
           )}
         </>

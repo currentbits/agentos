@@ -67,4 +67,35 @@ describe('updates', () => {
     expect(j.text).toHaveLength(64 * 1024);
     expect(j.text.endsWith('ok    agentos\n== done: ok\n')).toBe(true);
   });
+  it('a flock probe failure that is not "the lock is held" (exit 2, not 1) is not "running"', async () => {
+    const { deps } = fakeDeps((a) =>
+      a[0] === UPDATE && a[1] === '--version' ? { stdout: '1.0.0\n' }
+        : a[0] === 'flock' ? { code: 2 }
+          : a[1] === 'list' ? { stdout: RUNS } : {});
+    writeFileSync(deps.updateState, JSON.stringify(STATE));
+    const app = await buildApp(deps);
+    expect((await app.inject({ url: '/api/update', headers: H })).json().running).toBe(false);
+  });
+  it('skips ci-list and reports ciActive: null when nothing is available (no polling cost, no misleading restart warning)', async () => {
+    const { deps, calls } = fakeDeps(reply());
+    const app = await buildApp(deps);   // no update.json: available stays null
+    const j = (await app.inject({ url: '/api/update', headers: H })).json();
+    expect(j.available).toBeNull();
+    expect(j.ciActive).toBeNull();
+    expect(calls.some((c) => c.argv[1] === 'list')).toBe(false);
+  });
+  it('a corrupt update.json never reads as "up to date"', async () => {
+    const { deps } = fakeDeps(reply());
+    const app = await buildApp(deps);
+    const get = async () => (await app.inject({ url: '/api/update', headers: H })).json();
+
+    writeFileSync(deps.updateState, 'not json{{{');
+    expect(await get()).toMatchObject({ available: null, error: 'not checked yet' });
+
+    writeFileSync(deps.updateState, JSON.stringify({ checked_at: 12345, available: '1.1.0', error: null }));
+    expect(await get()).toMatchObject({ error: 'not checked yet' });
+
+    writeFileSync(deps.updateState, JSON.stringify({ checked_at: STATE.checked_at, available: 'bad version', error: null }));
+    expect(await get()).toMatchObject({ available: null, error: 'invalid version in update.json' });
+  });
 });
