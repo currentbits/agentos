@@ -41,19 +41,33 @@ write_issue() {  # agetty shows /run/issue.d/*.issue after /etc/issue (the versi
 }
 
 check() {
-  local inst cand avail="" err out base notes="" tmp
+  local inst cand avail="" err out base notes="" tmp st
   exec 9<"$LOCK"
-  flock -n 9 || { echo "agentos-update is running; check skipped" >&2; return 0; }
+  # -w 10, not -n: the web UI probes this same lock every 3 s (update.ts's "running" check), and a
+  # losing race there must not make the daily check (or finish()'s own refresh) skip silently.
+  flock -w 10 9 || { echo "agentos-update is running; check skipped" >&2; return 0; }
   inst=$(installed)
   err=$(source_problem)
-  [ -n "$err" ] || [ -n "$inst" ] || err="the agentos package is not installed"
+  if [ -z "$err" ]; then
+    if [ -z "$inst" ]; then
+      err="the agentos package is not installed"
+    else
+      # A migration that failed mid-update leaves dpkg's status anything but "ii " (fully
+      # installed, configured, no error) even though ${Version} already reports the new version:
+      # installed() alone would read that as "up to date".
+      st=$(dpkg-query -W -f '${db:Status-Abbrev}' agentos 2>/dev/null || true)
+      [ "$st" = "ii " ] || err="agentos is not fully configured (a migration failed): run agentos-update"
+    fi
+  fi
   if [ -z "$err" ]; then
     # shellcheck disable=SC2086 # APT_AGENTOS is a list of words
     if out=$(apt-get update -qq --error-on=any $APT_AGENTOS 2>&1); then
       cand=$(apt-cache policy agentos | sed -n 's/^ *Candidate: //p')
       if [ "$cand" = "(none)" ]; then
         err="agentos is not in the AgentOS repository index"
-      elif [[ $cand =~ $VERSION_RE ]] && dpkg --compare-versions "$cand" gt "$inst"; then
+      elif [[ ! $cand =~ $VERSION_RE ]]; then
+        err="the repo offers an invalid version"
+      elif dpkg --compare-versions "$cand" gt "$inst"; then
         avail=$cand
       fi
     else
@@ -69,8 +83,12 @@ check() {
   if [ -n "$avail" ]; then
     notes=$(set +o pipefail; curl -fsS --max-time 20 --max-filesize 65536 "$base/notes/$avail.md" 2>/dev/null | head -c 4096) || notes=
     # Strip control bytes (keep \n and \t) once, before notes are stored or printed: they're
-    # untrusted text shown as-is by the web UI and the console.
-    notes=$(printf '%s' "$notes" | LC_ALL=C tr -d '\000-\010\013-\037\177')
+    # untrusted text shown as-is by the web UI and the console. tr handles the single-byte C0
+    # controls and DEL; the C1 controls (U+0080-U+009F) are two UTF-8 bytes (\xC2\x80-\xC2\x9F) and
+    # a byte-range tr/sed over \x80-\x9F would also mangle the continuation bytes of ordinary
+    # multi-byte UTF-8 text (e.g. \xC3\xA9 "e"), so they're matched as that exact two-byte sequence,
+    # in LC_ALL=C so sed compares raw bytes rather than decoding (possibly invalid) UTF-8.
+    notes=$(printf '%s' "$notes" | LC_ALL=C tr -d '\000-\010\013-\037\177' | LC_ALL=C sed 's/\xc2[\x80-\x9f]//g')
   fi
   tmp=$(mktemp "$STATE/.update.json.XXXXXX")
   # $tmp is set with its final value now, not re-read when the trap fires: a `local` var set -e
@@ -134,7 +152,11 @@ update() {
   [ -z "$ids" ] || say "warning: CI runs in progress: $ids (they keep running; agentos-web restarts during the update)"
   why=$(source_problem)
   if [ -n "$why" ]; then say "skip  agentos ($why)"
-  else step "agentos" sudo bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq --error-on=any $APT_AGENTOS && apt-get -y -qq $APT_CONF install --only-upgrade agentos"
+  # dpkg --configure -a first: a package stuck half-configured by an earlier failed migration is
+  # already at its target version, so "--only-upgrade" alone could see nothing to upgrade and
+  # never touch it. Not "&&"-chained: an update() run must still attempt the rest even if this has
+  # nothing to do (exit 1) or the earlier failure needs the apt step below to actually fix it.
+  else step "agentos" sudo bash -c "export DEBIAN_FRONTEND=noninteractive; dpkg --configure -a; apt-get update -qq --error-on=any $APT_AGENTOS && apt-get -y -qq $APT_CONF install --only-upgrade agentos"
   fi
   step "apt"      sudo bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq && apt-get -y -qq $APT_CONF full-upgrade"
   step "claude"   claude update

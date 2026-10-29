@@ -1,8 +1,9 @@
 #!/bin/bash
 # Unit test for agentos-update --check, --notice, --issue and --version: update available (notes cut
-# to 4 KB and control bytes stripped), up to date, a bad signature, no network, a disabled source,
-# no candidate in the index, a hostile version string, and a running update. apt-get, apt-cache,
-# dpkg-query and curl are fakes; dpkg (version compare) and jq are real.
+# to 4 KB, control bytes and C1 controls stripped, other UTF-8 kept), up to date, a bad signature,
+# no network, a disabled source, no candidate in the index, an invalid candidate version, a
+# half-configured package (a failed migration), a brief lock wait, and a running update. apt-get,
+# apt-cache, dpkg-query and curl are fakes; dpkg (version compare) and jq are real.
 set -euo pipefail
 R=$(cd "$(dirname "$0")/.." && pwd)
 U=$R/package/usr/local/bin/agentos-update
@@ -24,7 +25,15 @@ case "\$(cat "$d/apt")" in
 esac
 EOS
 printf '#!/bin/sh\nprintf "agentos:\\n  Installed: 1.0.0\\n  Candidate: %%s\\n" "$(cat %s/cand)"\n' "$d" > "$d/bin/apt-cache"
-printf '#!/bin/sh\nprintf 1.0.0\n' > "$d/bin/dpkg-query"
+# -f '${Version}' (installed()) always reports 1.0.0; -f '${db:Status-Abbrev}' reports "$d/status"'s
+# content, defaulting to "ii " (fully configured) when that file doesn't exist.
+cat > "$d/bin/dpkg-query" <<EOS
+#!/bin/sh
+case "\$3" in
+  *Status-Abbrev*) cat "$d/status" 2>/dev/null || printf 'ii ' ;;
+  *) printf 1.0.0 ;;
+esac
+EOS
 cat > "$d/bin/curl" <<EOS
 #!/bin/bash
 for a; do u=\$a; done
@@ -66,6 +75,13 @@ printf 'clean\033[2Jtext\ttab\n' > "$d/notes"
 run --check >/dev/null
 [ "$(j '.notes')" = "$(printf 'clean[2Jtext\ttab')" ] || fail "control bytes: $(j '.notes')"
 
+# C1 controls (U+0080-U+009F, UTF-8 \xC2\x80-\xC2\x9F) are stripped too, e.g. a NEL (\xC2\x85); an
+# ordinary multi-byte UTF-8 character whose bytes fall in the same 0x80-0x9F range only as a
+# continuation byte (e.g. \xC3\xA9, "e" with an acute accent) must survive untouched.
+printf 'before\xc2\x85\xc3\xa9after\n' > "$d/notes"
+run --check >/dev/null
+[ "$(j '.notes')" = "$(printf 'before\xc3\xa9after')" ] || fail "C1 controls: $(j '.notes')"
+
 # Up to date: no notes fetched, the notices go away.
 echo 1.0.0 > "$d/cand"; : > "$d/curl.calls"
 [ "$(run --check)" = "AgentOS 1.0.0 is up to date" ] || fail "up to date summary"
@@ -89,9 +105,19 @@ run --check >/dev/null
 [ "$(j .error)" = "the AgentOS update source is disabled (development build)" ] && [ ! -s "$d/apt-get.calls" ] || fail "disabled"
 sed -i '1d' "$src"
 
-# A candidate that isn't a plain version is never offered (it would reach /run/issue.d and the MOTD).
-printf '1.1.0\033[2J\n' > "$d/cand"; run --check >/dev/null
-[ "$(j .available)" = null ] || fail "hostile candidate"
+# A failed migration leaves agentos half-configured: ${Version} already reports the new version,
+# but ${db:Status-Abbrev} isn't "ii ". --check must say so (and never apt-get update), not "up to
+# date" or attempt-and-silently-skip.
+printf 'hF ' > "$d/status"
+[[ $(run --check) == "AgentOS update check failed: agentos is not fully configured (a migration failed): run agentos-update"* ]] || fail "half-configured summary"
+[ "$(j .available)" = null ] && [ "$(j .error)" = "agentos is not fully configured (a migration failed): run agentos-update" ] || fail "half-configured: $(j .error)"
+rm -f "$d/status"
+
+# A candidate that fails the version regex is an error ("invalid version"), never "up to date" or
+# silently dropped back to it (it would otherwise reach /run/issue.d and the MOTD unvalidated).
+printf '1.1.0\033[2J\n' > "$d/cand"
+[[ $(run --check) == "AgentOS update check failed: the repo offers an invalid version"* ]] || fail "invalid candidate summary"
+[ "$(j .available)" = null ] && [ "$(j .error)" = "the repo offers an invalid version" ] || fail "invalid candidate: $(j .error)"
 printf '{"available":"9.9\\\\nroot"}' > "$d/state/update.json"
 [ -z "$(run --notice)" ] || fail "hostile update.json"
 
@@ -100,7 +126,17 @@ echo '(none)' > "$d/cand"
 [[ $(run --check) == "AgentOS update check failed:"* ]] || fail "no candidate summary"
 [ "$(j .available)" = null ] && [ "$(j .error)" != null ] || fail "no candidate: $(j .error)"
 
-# An update is running (it holds the lock): the check is skipped, update.json untouched.
+# A brief lock holder (the web UI's "running" probe, every 3 s) doesn't make the check skip: it
+# waits (flock -w 10) and still succeeds once the holder releases a couple of seconds later.
+echo ok > "$d/apt"; echo 1.1.0 > "$d/cand"
+( flock 9; sleep 2; ) 9<"$d/lock" &
+holder=$!
+out=$(run --check)
+wait "$holder"
+[[ $out == "AgentOS 1.1.0 is available"* ]] || fail "brief lock: $out"
+
+# An update is running (it holds the lock for longer than the 10 s wait): the check gives up and
+# is skipped, update.json untouched.
 cp "$d/state/update.json" "$d/before"
 ( flock 9; run --check 2>"$d/err"; ) 9<"$d/lock"
 cmp -s "$d/state/update.json" "$d/before" && grep -qx 'agentos-update is running; check skipped' "$d/err" || fail "lock"
