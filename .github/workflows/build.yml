@@ -139,6 +139,11 @@ jobs:
     needs: build
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
+    # Serializes the gh-pages publish below against any other release job (another tag pushed
+    # while this one is running); it must not cancel one of two tags racing to publish.
+    concurrency:
+      group: apt-publish
+      cancel-in-progress: false
     permissions:
       contents: write       # gh release create/upload
       id-token: write       # attestation signing
@@ -156,6 +161,22 @@ jobs:
         with:
           subject-checksums: release/SHA256SUMS
 
+      # Checked out and checked before the GitHub release is created below: a missing key or
+      # notes file should fail the workflow before there is a release to clean up by hand.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          persist-credentials: false
+          path: src
+      - name: Check apt publish prerequisites
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          AGENTOS_APT_KEY: ${{ secrets.AGENTOS_APT_KEY }}
+          V: ${{ needs.build.outputs.version }}
+        run: |
+          [ -n "$AGENTOS_APT_KEY" ] || { echo "the AGENTOS_APT_KEY secret is not set (docs/updates.md, owner steps)" >&2; exit 1; }
+          [ -s "src/docs/releases/$V.md" ] || { echo "write src/docs/releases/$V.md (what's new in $V) and tag again" >&2; exit 1; }
+
       - name: Release
         if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'schedule'
         env:
@@ -171,11 +192,6 @@ jobs:
 
       # The apt repo on gh-pages (docs/updates.md). Tags only; the signing key is used here and
       # nowhere else. Fails closed: no key, no notes, a development build or a foreign keyring.
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        if: startsWith(github.ref, 'refs/tags/v')
-        with:
-          persist-credentials: false
-          path: src
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         if: startsWith(github.ref, 'refs/tags/v')
         with:
@@ -188,18 +204,32 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           V: ${{ needs.build.outputs.version }}
         run: |
-          [ -n "$AGENTOS_APT_KEY" ] || { echo "the AGENTOS_APT_KEY secret is not set (docs/updates.md, owner steps)" >&2; exit 1; }
+          shopt -s nullglob
+          debs=(deb/agentos_*_amd64.deb)
+          [ "${#debs[@]}" -eq 1 ] || { echo "expected exactly one deb/agentos_*_amd64.deb, found ${#debs[@]}" >&2; exit 1; }
           notes=src/docs/releases/$V.md
-          [ -s "$notes" ] || { echo "write $notes (what's new in $V) and tag again" >&2; exit 1; }
           export GNUPGHOME="$RUNNER_TEMP/gnupg"
           install -d -m 700 "$GNUPGHOME"
           printf '%s\n' "$AGENTOS_APT_KEY" | gpg --batch --quiet --import
           repo="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          git clone --quiet --depth 1 --branch gh-pages "$repo" site || { git init --quiet -b gh-pages site && git -C site remote add origin "$repo"; }
-          src/tools/apt-publish.sh deb/agentos_*_amd64.deb "$notes" site
+          # A clone failure must not silently become a fresh (empty) repo: only "branch does not
+          # exist yet" (ls-remote --exit-code exit 2) does; any other failure fails the step.
+          before=""
+          if sha=$(git ls-remote --exit-code --heads "$repo" gh-pages); then
+            before=${sha%%$'\t'*}
+            git clone --quiet --depth 1 --branch gh-pages "$repo" site
+          else
+            rc=$?
+            [ "$rc" -eq 2 ] || { echo "git ls-remote gh-pages failed (exit $rc)" >&2; exit 1; }
+            git init --quiet -b gh-pages site
+            git -C site remote add origin "$repo"
+          fi
+          src/tools/apt-publish.sh "${debs[0]}" "$notes" site
           # One commit, force-pushed: pruned versions leave nothing behind in the branch's history.
+          # --force-with-lease refuses if gh-pages moved since the clone/ls-remote above (a
+          # concurrent publish); an empty $before means it must still not exist.
           cd site
           git checkout --quiet --orphan publish
           git add -A
           git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit --quiet -m "apt: agentos $V"
-          git push --quiet --force origin publish:gh-pages
+          git push --quiet --force-with-lease="gh-pages:$before" origin publish:gh-pages
