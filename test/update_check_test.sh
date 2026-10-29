@@ -9,7 +9,7 @@ R=$(cd "$(dirname "$0")/.." && pwd)
 U=$R/package/usr/local/bin/agentos-update
 d=$(mktemp -d); trap 'rm -rf "$d"' EXIT
 mkdir -p "$d/bin" "$d/state"
-touch "$d/lock"
+touch "$d/lock" "$d/checklock"
 src=$d/agentos.sources
 printf 'Types: deb\nURIs: https://example.github.io/agentos/apt/\nSuites: stable\nComponents: main\nSigned-By: /usr/share/keyrings/agentos-archive.gpg\n' > "$src"
 cat > "$d/bin/apt-get" <<EOS
@@ -51,7 +51,7 @@ done
 EOS
 chmod +x "$d/bin/"*
 run() { env PATH="$d/bin:$PATH" AGENTOS_STATE="$d/state" AGENTOS_SOURCES="$src" AGENTOS_ISSUE="$d/issue.d/60-agentos-update.issue" \
-          AGENTOS_UPDATE_LOCK="$d/lock" "$U" "$@"; }
+          AGENTOS_UPDATE_LOCK="$d/lock" AGENTOS_UPDATE_CHECK_LOCK="$d/checklock" "$U" "$@"; }
 j() { jq -r "$1" "$d/state/update.json"; }
 fail() { echo "FAIL: $*" >&2; exit 1; }
 LINE='AgentOS 1.1.0 available: run agentos-update (or use the web UI)'
@@ -126,18 +126,29 @@ echo '(none)' > "$d/cand"
 [[ $(run --check) == "AgentOS update check failed:"* ]] || fail "no candidate summary"
 [ "$(j .available)" = null ] && [ "$(j .error)" != null ] || fail "no candidate: $(j .error)"
 
-# A brief lock holder (the web UI's "running" probe, every 3 s) doesn't make the check skip: it
-# waits (flock -w 10) and still succeeds once the holder releases a couple of seconds later.
+# A brief holder of check()'s own lock (another check racing it: the daily timer vs. a web UI
+# "Check now") doesn't make the check skip: it waits (flock -w 10) and still succeeds once the
+# holder releases a couple of seconds later.
 echo ok > "$d/apt"; echo 1.1.0 > "$d/cand"
-( flock 9; sleep 2; ) 9<"$d/lock" &
+( flock 9; sleep 2; ) 9<"$d/checklock" &
 holder=$!
 out=$(run --check)
 wait "$holder"
 [[ $out == "AgentOS 1.1.0 is available"* ]] || fail "brief lock: $out"
 
-# An update is running (it holds the lock for longer than the 10 s wait): the check gives up and
-# is skipped, update.json untouched.
+# An update is running (begin() holds both locks for longer than the 10 s wait): the check gives
+# up and is skipped, update.json untouched -- and, separately, the web UI's "running" probe (a
+# bare flock -n on just $d/lock) is unaffected by a check alone (asserted below), only by this.
 cp "$d/state/update.json" "$d/before"
-( flock 9; run --check 2>"$d/err"; ) 9<"$d/lock"
+( flock 9; flock 8; run --check 2>"$d/err"; ) 9<"$d/lock" 8<"$d/checklock"
 cmp -s "$d/state/update.json" "$d/before" && grep -qx 'agentos-update is running; check skipped' "$d/err" || fail "lock"
+
+# The bug this is fixing: a check in progress (holding only its own lock) must not make the web
+# UI's "running" probe (flock -n on $d/lock alone) report busy -- only a real update/rollback,
+# which holds $d/lock too, does that.
+( flock 9; sleep 2; ) 9<"$d/checklock" &
+holder=$!
+sleep 0.3
+flock -n "$d/lock" true || fail "a check in progress made the update lock look held"
+wait "$holder"
 echo "update check OK"

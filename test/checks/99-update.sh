@@ -8,7 +8,22 @@ check_agentos_package_installed() {  # sorts before check_agentos_update and che
       test -z "$(find /etc/systemd/system -maxdepth 1 -name "agentos-*" -print -quit)" &&
       test ! -e /etc/systemd/system/docker.service.d/10-agentos.conf &&
       systemctl is-enabled --quiet agentos-update-check.timer && systemctl is-active --quiet agentos-update-check.timer &&
-      test "$(stat -c "%U %a" /var/log/agentos-update.log /run/lock/agentos-update.lock | sort -u)" = "agent 644"'
+      test "$(stat -c "%U %a" /var/log/agentos-update.log /run/lock/agentos-update.lock /run/lock/agentos-update-check.lock | sort -u)" = "agent 644"'
+}
+
+check_update_check_lock_not_web_running() {
+  # The bug this is fixing: the daily check holds its own lock (agentos-update-check.lock), not
+  # the one the web UI's "agentos-update is running" probe watches (agentos-update.lock) -- a
+  # check in progress must never make the UI show an update as running.
+  web_users && vm "$WEB"'
+    ( flock 9; sleep 3; ) 9</run/lock/agentos-update-check.lock &
+    holder=$!
+    sleep 0.3
+    ! flock -n /run/lock/agentos-update-check.lock true &&
+    w $U/api/update | jq -e ".running == false" >/dev/null
+    rc=$?
+    wait "$holder"
+    exit $rc'
 }
 
 check_update_dev_build_source_disabled() {

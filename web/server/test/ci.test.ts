@@ -101,5 +101,25 @@ describe('ci routes', () => {
     const ws = await app.injectWS(`/api/ci/runs/${ID}/log?step=test`, { headers: HM });
     expect(spawnCalls.at(-1)).toEqual([CI, 'logs', ID, '--follow', '--step=test']);
     ws.terminate();
+    await new Promise((resolve) => ws.on('close', resolve));
+  });
+
+  it('caps concurrent log tails at 8 per server, closing the extra one with 1013', async () => {
+    const { deps } = fakeDeps();
+    const app = await buildApp(deps);
+    await app.ready();
+    const open = async () => app.injectWS(`/api/ci/runs/${ID}/log`, { headers: HM });
+    const closeOf = (ws: Awaited<ReturnType<typeof open>>) => new Promise<number>((resolve) => ws.on('close', (code: number) => resolve(code)));
+    const sockets = [];
+    for (let i = 0; i < 8; i++) sockets.push(await open());
+    const extra = await open();
+    expect(await closeOf(extra)).toBe(1013);
+    const firstClosed = closeOf(sockets[0]);
+    sockets[0].terminate();
+    await firstClosed;
+    const spawnedBefore = spawnCalls.length;
+    const after = await open();            // a slot freed up: a new tail is accepted, not 1013'd
+    expect(spawnCalls.length).toBe(spawnedBefore + 1);
+    await app.close();                     // tears down every remaining open socket
   });
 });

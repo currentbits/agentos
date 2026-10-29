@@ -67,6 +67,19 @@ describe('updates', () => {
     expect(j.text).toHaveLength(64 * 1024);
     expect(j.text.endsWith('ok    agentos\n== done: ok\n')).toBe(true);
   });
+  it('GET /api/update/log: a 64 KiB cut does not split a multi-byte UTF-8 character', async () => {
+    const { deps } = fakeDeps(reply(true));
+    const app = await buildApp(deps);
+    // A 2-byte char ('é', 0xC3 0xA9) straddling the cut point: the tail's read starts one byte
+    // into it, at the lone continuation byte 0xA9, which must be dropped, not turned into U+FFFD.
+    const buf = Buffer.concat([Buffer.from([0xc3, 0xa9]), Buffer.alloc(65531, 'y'), Buffer.from('END\n')]);
+    expect(buf.length).toBe(65537);
+    writeFileSync(deps.updateLog, buf);
+    const j = (await app.inject({ url: '/api/update/log', headers: H })).json();
+    expect(j.text).not.toContain('�');
+    expect(j.text.endsWith('END\n')).toBe(true);
+    expect(j.text.length).toBe(65535);
+  });
   it('a flock probe failure that is not "the lock is held" (exit 2, not 1) is not "running"', async () => {
     const { deps } = fakeDeps((a) =>
       a[0] === UPDATE && a[1] === '--version' ? { stdout: '1.0.0\n' }

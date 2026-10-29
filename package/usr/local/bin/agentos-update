@@ -14,6 +14,11 @@ STATE=${AGENTOS_STATE:-/var/lib/agentos}
 SOURCES=${AGENTOS_SOURCES:-/etc/apt/sources.list.d/agentos.sources}
 ISSUE=${AGENTOS_ISSUE:-/run/issue.d/60-agentos-update.issue}
 LOCK=${AGENTOS_UPDATE_LOCK:-/run/lock/agentos-update.lock}
+# check()'s own lock, for check-vs-check exclusion only: update()/rollback() hold BOTH this and
+# $LOCK for their whole run, so a concurrent check still waits them out via this lock, but the web
+# UI's "agentos-update is running" probe (which watches only $LOCK) never fires just because the
+# daily check happens to be in progress.
+CHECKLOCK=${AGENTOS_UPDATE_CHECK_LOCK:-/run/lock/agentos-update-check.lock}
 ULOG=${AGENTOS_UPDATE_LOG:-/var/log/agentos-update.log}
 VERSION_RE='^[0-9][A-Za-z0-9.+~]*$'
 # Refresh only the AgentOS source: List-Cleanup=0 keeps the other sources' lists, and --error-on=any
@@ -42,9 +47,12 @@ write_issue() {  # agetty shows /run/issue.d/*.issue after /etc/issue (the versi
 
 check() {
   local inst cand avail="" err out base notes="" tmp st
-  exec 9<"$LOCK"
-  # -w 10, not -n: the web UI probes this same lock every 3 s (update.ts's "running" check), and a
-  # losing race there must not make the daily check (or finish()'s own refresh) skip silently.
+  exec 9<"$CHECKLOCK"
+  # -w 10, not -n: another check (the daily timer racing a web UI "Check now", or finish()'s own
+  # refresh) only ever holds this briefly, and a losing race there must not skip silently. A real
+  # update/rollback holds this lock too (for its whole run), so a check started while one is in
+  # progress still waits here -- it just doesn't make the web UI's "running" probe fire, since that
+  # probe watches $LOCK, not this one.
   flock -w 10 9 || { echo "agentos-update is running; check skipped" >&2; return 0; }
   inst=$(installed)
   err=$(source_problem)
@@ -122,12 +130,14 @@ step() {  # step <label> <command...>
   if env --default-signal=PIPE "$@" >"$LOG" 2>&1; then say "ok    $label"
   else say "FAIL  $label (see below)"; while IFS= read -r l; do say "      $l"; done < <(tail -5 "$LOG"); FAILED=1; fi
 }
-begin() {  # lock, then log: shared by the update and the rollback
+begin() {  # lock (both: this run's own, and the one a concurrent check waits on), then log
   [ "$(id -un)" = agent ] || { echo "run as the agent user" >&2; exit 2; }
   exec 9<"$LOCK"
-  # The daily check (--check) only ever holds this lock briefly: wait for it rather than giving up
-  # immediately.
+  exec 8<"$CHECKLOCK"
+  # Either lock only ever briefly held by something else (another update/rollback finishing up, or
+  # a check): wait for it rather than giving up immediately.
   flock -w 60 9 || { echo "agentos-update is already running" >&2; exit 3; }
+  flock -w 60 8 || { flock -u 9; echo "agentos-update is already running" >&2; exit 3; }
   # Started from the web UI, this process outlives agentos-web's restart (KillMode=process), but its
   # stdout then has no reader: ignore SIGPIPE and keep going; the web UI reads $ULOG instead.
   trap '' PIPE
@@ -136,8 +146,9 @@ begin() {  # lock, then log: shared by the update and the rollback
   trap 'rm -f "$LOG"' EXIT
   say "== agentos-update $* $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }
-finish() {  # unlock, refresh update.json (and the console/MOTD notice), report
+finish() {  # unlock both, refresh update.json (and the console/MOTD notice), report
   flock -u 9
+  flock -u 8
   sudo -n "$0" --check >/dev/null 2>&1 || true
   say "== done: $([ "$FAILED" = 0 ] && echo ok || echo 'with failures')"
   exit "$FAILED"

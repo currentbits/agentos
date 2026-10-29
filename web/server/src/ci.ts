@@ -16,6 +16,11 @@ export async function ciJson<T = unknown>(deps: Deps, a: Action): Promise<T> {
 
 interface RunInfo { id: string; repo: string; commit: string }
 
+// A run's log can be tailed from several tabs/users at once; cap the total across all runs so a
+// pile of forgotten tabs can't exhaust this server's file descriptors/child processes.
+const MAX_LOG_TAILS = 8;
+let activeLogTails = 0;
+
 export function ciRoutes(app: FastifyInstance, deps: Deps): void {
   app.get<{ Querystring: { repo?: string; limit?: string } }>('/api/ci/runs', async (req) => {
     const limit = /^\d{1,3}$/.test(req.query.limit ?? '') ? Math.min(Math.max(Number(req.query.limit), 1), 200) : 50;
@@ -42,6 +47,9 @@ export function ciRoutes(app: FastifyInstance, deps: Deps): void {
   });
   app.get('/api/ci/remotes', async () => ciJson(deps, { name: 'ci-remotes' }));
   app.get<{ Params: { id: string }; Querystring: { step?: string } }>('/api/ci/runs/:id/log', { websocket: true }, (socket, req) => {
+    if (activeLogTails >= MAX_LOG_TAILS) { socket.close(1013, 'too many concurrent CI log tails; try again shortly'); return; }
+    activeLogTails++;
+    socket.on('close', () => { activeLogTails--; });
     try {
       streamToSocket(socket, argv({ name: 'ci-log', id: req.params.id, step: req.query.step ?? '' }));
     } catch (e) {

@@ -20,9 +20,16 @@ async function tail(path: string, max: number): Promise<string> {
     const f = await open(path, 'r');
     try {
       const { size } = await f.stat();
-      const buf = Buffer.alloc(Math.min(size, max));
-      await f.read(buf, 0, buf.length, size - buf.length);
-      return buf.toString('utf8');
+      const len = Math.min(size, max);
+      const offset = size - len;
+      const buf = Buffer.alloc(len);
+      await f.read(buf, 0, len, offset);
+      // A tail cut at this byte boundary can start mid-character: a UTF-8 continuation byte
+      // (10xxxxxx) never starts a character, so drop any at the front instead of letting
+      // Buffer#toString silently turn the broken lead byte into a stray U+FFFD.
+      let start = 0;
+      if (offset > 0) while (start < buf.length && (buf[start] & 0xc0) === 0x80) start++;
+      return buf.toString('utf8', start);
     } finally { await f.close(); }
   } catch { return ''; }
 }
