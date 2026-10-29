@@ -1,7 +1,8 @@
 #!/bin/bash
 # Build the agentos .deb into mkosi.packages/, where mkosi finds it (a local repository) and installs
 # it into the image (mkosi.conf.d/50-agentos.conf). Release builds publish the same file to the apt repo.
-#   tools/build-deb.sh                     version: the v* tag on HEAD, else 0.0.0~git<date>.<sha>
+#   tools/build-deb.sh                     version: the v* tag on HEAD, else <last v* tag>+git<date>.<sha>
+#                                          (0.0.0+git<date>.<sha> with no tag at all)
 #   AGENTOS_VERSION=1.4.0 tools/build-deb.sh
 #   AGENTOS_DEV=1 tools/build-deb.sh       allowed while the repo URL or the signing key is not set
 #                                          yet: the AgentOS apt source ships disabled (Enabled: no)
@@ -106,9 +107,25 @@ inside() {  # runs in the container: /src (the repo, read-only) -> /out/agentos_
   chown "$OWNER_UID:$OWNER_GID" "/out/agentos_${AGENTOS_VERSION}_amd64.deb"
 }
 
+# stdout: $AGENTOS_VERSION if set; else the exact tag on HEAD; else the last v* tag (anywhere in
+# the repo, not just HEAD's ancestry) plus +git<date>.<sha>, or 0.0.0+git<date>.<sha> if there is no
+# tag at all. The +git form sorts above that last tag and below the next one (dpkg --compare-versions:
+# "1.0.0+git..." gt "1.0.0", lt "1.0.1"), so an untagged build is never offered as a downgrade once
+# the repo has real releases. ~git (sorts *below* the last tag) would do the opposite.
+compute_version() {
+  local v tag last
+  v=${AGENTOS_VERSION:-}
+  if [ -n "$v" ]; then echo "$v"; return; fi
+  tag=$(git describe --exact-match --tags --match 'v[0-9]*' HEAD 2>/dev/null || true)
+  if [ -n "$tag" ]; then echo "${tag#v}"; return; fi
+  last=$(git tag --list 'v[0-9]*' | sed 's/^v//' | sort -V | tail -1)
+  echo "${last:-0.0.0}+git$(date -u +%Y%m%d).$(git rev-parse --short=8 HEAD 2>/dev/null || echo local)"
+}
+
 if [ "${1:-}" = --inside ]; then inside; exit 0; fi
 
 cd "$(dirname "$0")/.."
+if [ "${1:-}" = --print-version ]; then compute_version; exit 0; fi
 SRC=package/etc/apt/sources.list.d/agentos.sources
 KEY=package/usr/share/keyrings/agentos-archive.gpg
 dev=0
@@ -117,12 +134,7 @@ if grep -q '^URIs: https://OWNER\.github\.io/REPO/apt$' "$SRC" || [ ! -s "$KEY" 
   [ "${AGENTOS_DEV:-0}" = 1 ] || die "the AgentOS apt repo is not set up yet: set its URL in $SRC and commit its public key as $KEY (docs/updates.md, owner steps), or build with AGENTOS_DEV=1 for a development image whose AgentOS update source is disabled"
   dev=1
 fi
-V=${AGENTOS_VERSION:-}
-if [ -z "$V" ]; then
-  tag=$(git describe --exact-match --tags --match 'v[0-9]*' HEAD 2>/dev/null || true)
-  if [ -n "$tag" ]; then V=${tag#v}
-  else V="0.0.0~git$(date -u +%Y%m%d).$(git rev-parse --short=8 HEAD 2>/dev/null || echo local)"; fi
-fi
+V=$(compute_version)
 [[ $V =~ ^[0-9][A-Za-z0-9.+~]*$ ]] || die "not a usable package version: $V"
 mkdir -p mkosi.packages
 rm -f mkosi.packages/agentos_*.deb

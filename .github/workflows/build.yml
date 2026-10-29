@@ -23,6 +23,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
+          fetch-depth: 0   # tools/build-deb.sh's version fallback needs every v* tag, not just HEAD
 
       - name: Free disk
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache
@@ -48,6 +49,7 @@ jobs:
             package/etc/update-motd.d/60-agentos-update \
             test/wrapper_test.sh test/solenta_pair_test.sh test/bridge_test.sh \
             test/configure_test.sh test/register_mcp_test.sh test/migration_001_test.sh test/apt_publish_test.sh test/update_check_test.sh \
+            test/build_deb_version_test.sh \
             tools/build-installer.sh test/installer-boot-test.sh test/install-test.sh installer/mkosi.extra/usr/local/sbin/* \
             installer/mkosi.extra/usr/lib/agentos-installer/lib.sh
           test/env_test.sh
@@ -62,6 +64,7 @@ jobs:
           test/migration_001_test.sh
           test/apt_publish_test.sh
           test/update_check_test.sh
+          test/build_deb_version_test.sh
 
       - name: agentos-ci unit tests
         run: |
@@ -78,17 +81,22 @@ jobs:
           (cd web/server && npm ci && npm run typecheck && npx vitest run)
           (cd web/ui && npm ci && npx vitest run && npm run build)
 
+      # "v" is this workflow's own release/asset tag (a date for non-tag builds, e.g. the weekly
+      # schedule's release); it has nothing to do with the deb package's version below.
       - name: Version
         id: ver
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then echo "v=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"; echo "deb=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-          else echo "v=$(date -u +%Y.%m.%d)" >> "$GITHUB_OUTPUT"; echo "deb=0.0.0~git$(date -u +%Y%m%d).${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"; fi
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then echo "v=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else echo "v=$(date -u +%Y.%m.%d)" >> "$GITHUB_OUTPUT"; fi
 
       # A tag must build a release package (repo URL and signing key set, tools/build-deb.sh fails
       # otherwise); every other build may be a development build with the AgentOS source disabled.
+      # AGENTOS_VERSION is left unset for non-tag builds: build-deb.sh's own fallback (the last v*
+      # tag, or 0.0.0 if there is none, plus +git<date>.<sha>) needs the full tag history, which the
+      # checkout step above now fetches.
       - name: Build the agentos package
         env:
-          AGENTOS_VERSION: ${{ steps.ver.outputs.deb }}
+          AGENTOS_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && steps.ver.outputs.v || '' }}
           AGENTOS_DEV: ${{ startsWith(github.ref, 'refs/tags/v') && '0' || '1' }}
         run: tools/build-deb.sh
 
@@ -141,10 +149,12 @@ jobs:
     needs: build
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
-    # Serializes the gh-pages publish below against any other release job (another tag pushed
-    # while this one is running); it must not cancel one of two tags racing to publish.
+    # Serializes the gh-pages publish below against any other release job for a tag push (another
+    # tag pushed while this one is running); it must not cancel one of two tags racing to publish.
+    # Non-tag runs (main pushes, PRs excluded by the job's own `if`, the weekly schedule) never
+    # touch gh-pages, so each gets its own group by run id instead of queuing behind "apt-publish".
     concurrency:
-      group: apt-publish
+      group: ${{ startsWith(github.ref, 'refs/tags/v') && 'apt-publish' || format('release-{0}', github.run_id) }}
       cancel-in-progress: false
     permissions:
       contents: write       # gh release create/upload
@@ -199,6 +209,9 @@ jobs:
         with:
           name: deb
           path: deb
+      - name: Install apt-ftparchive
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq apt-utils
       - name: Publish the package to the apt repo (gh-pages)
         if: startsWith(github.ref, 'refs/tags/v')
         env:
@@ -217,7 +230,7 @@ jobs:
           # A clone failure must not silently become a fresh (empty) repo: only "branch does not
           # exist yet" (ls-remote --exit-code exit 2) does; any other failure fails the step.
           before=""
-          if sha=$(git ls-remote --exit-code --heads "$repo" gh-pages); then
+          if sha=$(git ls-remote --exit-code --heads "$repo" refs/heads/gh-pages); then
             before=${sha%%$'\t'*}
             git clone --quiet --depth 1 --branch gh-pages "$repo" site
           else
