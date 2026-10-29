@@ -51,7 +51,11 @@ check() {
     # shellcheck disable=SC2086 # APT_AGENTOS is a list of words
     if out=$(apt-get update -qq --error-on=any $APT_AGENTOS 2>&1); then
       cand=$(apt-cache policy agentos | sed -n 's/^ *Candidate: //p')
-      if [[ $cand =~ $VERSION_RE ]] && dpkg --compare-versions "$cand" gt "$inst"; then avail=$cand; fi
+      if [ "$cand" = "(none)" ]; then
+        err="agentos is not in the AgentOS repository index"
+      elif [[ $cand =~ $VERSION_RE ]] && dpkg --compare-versions "$cand" gt "$inst"; then
+        avail=$cand
+      fi
     else
       err=$(printf '%s\n' "$out" | sed -n 's/^E: //p' | head -1 | cut -c1-300)
       err=${err:-apt-get update failed}
@@ -59,16 +63,27 @@ check() {
   fi
   base=$(sed -n 's/^URIs:[[:space:]]*//p' "$SOURCES" 2>/dev/null | head -1); base=${base%/}
   # The notes are untrusted text: at most 4 KB, shown as plain text by the web UI and the console.
+  # pipefail is off for this one pipeline: once `head` has its 4 KB it stops reading, curl gets
+  # SIGPIPE/EPIPE on its next write and the pipeline's exit status would otherwise be non-zero,
+  # which fed into `|| notes=` and threw away the 4 KB `head` had already captured.
   if [ -n "$avail" ]; then
-    notes=$(curl -fsS --max-time 20 --max-filesize 65536 "$base/notes/$avail.md" 2>/dev/null | head -c 4096) || notes=
+    notes=$(set +o pipefail; curl -fsS --max-time 20 --max-filesize 65536 "$base/notes/$avail.md" 2>/dev/null | head -c 4096) || notes=
+    # Strip control bytes (keep \n and \t) once, before notes are stored or printed: they're
+    # untrusted text shown as-is by the web UI and the console.
+    notes=$(printf '%s' "$notes" | LC_ALL=C tr -d '\000-\010\013-\037\177')
   fi
   tmp=$(mktemp "$STATE/.update.json.XXXXXX")
+  # $tmp is set with its final value now, not re-read when the trap fires: a `local` var set -e
+  # unwinds out of scope by the time an EXIT trap runs, after the function that declared it returns.
+  # shellcheck disable=SC2064 # intentional: see above
+  trap "rm -f $(printf %q "$tmp")" EXIT
   jq -n --arg i "$inst" --arg a "$avail" --arg u "${avail:+$base/notes/$avail.md}" --arg n "$notes" \
     --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg e "$err" \
     'def opt: if . == "" then null else . end;
      {installed: ($i | opt), available: ($a | opt), notes_url: ($u | opt), notes: $n, checked_at: $t, error: ($e | opt)}' > "$tmp"
   chmod 644 "$tmp"
   mv "$tmp" "$STATE/update.json"
+  trap - EXIT
   write_issue
   if [ -n "$err" ]; then echo "AgentOS update check failed: $err"
   elif [ -n "$avail" ]; then echo "AgentOS $avail is available (installed: $inst)"; [ -z "$notes" ] || printf '\n%s\n' "$notes"
@@ -82,13 +97,19 @@ say() {  # to the update log, and to stdout while anyone still reads it
 }
 step() {  # step <label> <command...>
   local label=$1 l; shift
-  if "$@" >"$LOG" 2>&1; then say "ok    $label"
+  # begin() ignores SIGPIPE for this script (see there), but a step's own pipes (grok's installer
+  # piped into bash, apt/dpkg scriptlets, ...) expect the normal default: terminate on SIGPIPE.
+  # env --default-signal resets that before exec, and it survives through sudo/bash to anything
+  # the step runs.
+  if env --default-signal=PIPE "$@" >"$LOG" 2>&1; then say "ok    $label"
   else say "FAIL  $label (see below)"; while IFS= read -r l; do say "      $l"; done < <(tail -5 "$LOG"); FAILED=1; fi
 }
 begin() {  # lock, then log: shared by the update and the rollback
   [ "$(id -un)" = agent ] || { echo "run as the agent user" >&2; exit 2; }
   exec 9<"$LOCK"
-  flock -n 9 || { echo "agentos-update is already running" >&2; exit 3; }
+  # The daily check (--check) only ever holds this lock briefly: wait for it rather than giving up
+  # immediately.
+  flock -w 60 9 || { echo "agentos-update is already running" >&2; exit 3; }
   # Started from the web UI, this process outlives agentos-web's restart (KillMode=process), but its
   # stdout then has no reader: ignore SIGPIPE and keep going; the web UI reads $ULOG instead.
   trap '' PIPE
@@ -130,10 +151,10 @@ rollback() {
   local why inst target v vers=()
   begin --rollback "$@"
   why=$(source_problem)
-  [ -z "$why" ] || { say "FAIL  rollback ($why)"; exit 1; }
+  [ -z "$why" ] || { say "FAIL  rollback ($why)"; FAILED=1; finish; }
   # shellcheck disable=SC2086,SC2024 # APT_AGENTOS is a list of words; $LOG is agent's own file
   if ! sudo apt-get update -qq --error-on=any $APT_AGENTOS >"$LOG" 2>&1; then
-    say "FAIL  rollback (the AgentOS repo could not be read)"; while IFS= read -r v; do say "      $v"; done < <(tail -5 "$LOG"); exit 1
+    say "FAIL  rollback (the AgentOS repo could not be read)"; while IFS= read -r v; do say "      $v"; done < <(tail -5 "$LOG"); FAILED=1; finish
   fi
   inst=$(installed)
   mapfile -t vers < <(apt-cache madison agentos | awk -F'|' '{gsub(/ /, "", $2); print $2}')   # newest first
@@ -142,9 +163,9 @@ rollback() {
   target=${1:-}
   if [ -z "$target" ]; then
     for v in "${vers[@]}"; do if dpkg --compare-versions "$v" lt "$inst"; then target=$v; break; fi; done
-    [ -n "$target" ] || { say "FAIL  rollback (no version older than $inst in the repo)"; exit 1; }
+    [ -n "$target" ] || { say "FAIL  rollback (no version older than $inst in the repo)"; FAILED=1; finish; }
   fi
-  printf '%s\n' "${vers[@]}" | grep -qxF -- "$target" || { say "FAIL  rollback ($target is not in the repo)"; exit 1; }
+  printf '%s\n' "${vers[@]}" | grep -qxF -- "$target" || { say "FAIL  rollback ($target is not in the repo)"; FAILED=1; finish; }
   # Migrations are forward-only and safe to run again: a rollback does not undo them.
   step "agentos $target" sudo bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get -y -qq --allow-downgrades $APT_CONF install agentos=$(printf %q "$target")"
   finish

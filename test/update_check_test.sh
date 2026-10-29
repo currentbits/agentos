@@ -1,8 +1,8 @@
 #!/bin/bash
 # Unit test for agentos-update --check, --notice, --issue and --version: update available (notes cut
-# to 4 KB), up to date, a bad signature, no network, a disabled source, a hostile version string,
-# and a running update. apt-get, apt-cache, dpkg-query and curl are fakes; dpkg (version compare)
-# and jq are real.
+# to 4 KB and control bytes stripped), up to date, a bad signature, no network, a disabled source,
+# no candidate in the index, a hostile version string, and a running update. apt-get, apt-cache,
+# dpkg-query and curl are fakes; dpkg (version compare) and jq are real.
 set -euo pipefail
 R=$(cd "$(dirname "$0")/.." && pwd)
 U=$R/package/usr/local/bin/agentos-update
@@ -25,7 +25,21 @@ esac
 EOS
 printf '#!/bin/sh\nprintf "agentos:\\n  Installed: 1.0.0\\n  Candidate: %%s\\n" "$(cat %s/cand)"\n' "$d" > "$d/bin/apt-cache"
 printf '#!/bin/sh\nprintf 1.0.0\n' > "$d/bin/dpkg-query"
-printf '#!/bin/sh\nfor a; do u=$a; done\necho "$u" >> %s/curl.calls\ncat %s/notes\n' "$d" "$d" > "$d/bin/curl"
+cat > "$d/bin/curl" <<EOS
+#!/bin/bash
+for a; do u=\$a; done
+echo "\$u" >> "$d/curl.calls"
+# Write the response in 1000-byte pieces via the printf builtin (no fork per write) with a short
+# pause between them, so an early reader (head -c N) can hang up mid-stream and SIGPIPE kills us
+# outright -- the same way real curl dies when the pipe closes while it is still writing the body.
+content=\$(cat "$d/notes")
+off=0
+while [ "\$off" -lt "\${#content}" ]; do
+  printf '%s' "\${content:\$off:1000}"
+  off=\$((off+1000))
+  sleep 0.1
+done
+EOS
 chmod +x "$d/bin/"*
 run() { env PATH="$d/bin:$PATH" AGENTOS_STATE="$d/state" AGENTOS_SOURCES="$src" AGENTOS_ISSUE="$d/issue.d/60-agentos-update.issue" \
           AGENTOS_UPDATE_LOCK="$d/lock" "$U" "$@"; }
@@ -46,6 +60,11 @@ out=$(run --check)
 [ "$(run --notice)" = "$LINE" ] || fail "notice"
 [ "$(cat "$d/issue.d/60-agentos-update.issue")" = "$LINE" ] || fail "issue"
 [ "$(run --version)" = 1.0.0 ] || fail "--version"
+
+# Control bytes (e.g. a real ESC) are stripped from notes once, before they're stored or printed.
+printf 'clean\033[2Jtext\ttab\n' > "$d/notes"
+run --check >/dev/null
+[ "$(j '.notes')" = "$(printf 'clean[2Jtext\ttab')" ] || fail "control bytes: $(j '.notes')"
 
 # Up to date: no notes fetched, the notices go away.
 echo 1.0.0 > "$d/cand"; : > "$d/curl.calls"
@@ -71,10 +90,15 @@ run --check >/dev/null
 sed -i '1d' "$src"
 
 # A candidate that isn't a plain version is never offered (it would reach /run/issue.d and the MOTD).
-printf '1.1.0\\e[2J\n' > "$d/cand"; run --check >/dev/null
+printf '1.1.0\033[2J\n' > "$d/cand"; run --check >/dev/null
 [ "$(j .available)" = null ] || fail "hostile candidate"
 printf '{"available":"9.9\\\\nroot"}' > "$d/state/update.json"
 [ -z "$(run --notice)" ] || fail "hostile update.json"
+
+# The repo is reachable but apt has no agentos candidate at all: an error, not "up to date".
+echo '(none)' > "$d/cand"
+[[ $(run --check) == "AgentOS update check failed:"* ]] || fail "no candidate summary"
+[ "$(j .available)" = null ] && [ "$(j .error)" != null ] || fail "no candidate: $(j .error)"
 
 # An update is running (it holds the lock): the check is skipped, update.json untouched.
 cp "$d/state/update.json" "$d/before"
