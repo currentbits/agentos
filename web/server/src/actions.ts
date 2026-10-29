@@ -11,6 +11,8 @@ export const DESKTOP_RE = /^([1-9]|1[0-6])$/;
 export const CI = '/usr/local/bin/agentos-ci';
 export const SOLENTA_PAIR = '/usr/local/lib/agentos/solenta-pair';
 export const CI_ID_RE = /^\d{8}-\d{6}-[0-9a-f]{4}$/;
+export const UPDATE = '/usr/local/bin/agentos-update';
+export const UPDATE_LOCK = '/run/lock/agentos-update.lock';
 export const STEP_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
 export const GIT_REF_RE = /^[A-Za-z0-9_][A-Za-z0-9_./@^~{}-]{0,254}$/;   // agentos-ci's REF_RE
 const ABS_PATH_RE = /^\/[^\0\n]*$/;
@@ -25,6 +27,9 @@ export type Action =
   | { name: 'restart'; unit: string }
   | { name: 'journal'; unit: string }
   | { name: 'update' }
+  | { name: 'update-check' }                         // as root: refreshes only the AgentOS source
+  | { name: 'update-version' }
+  | { name: 'update-running' }                       // exits non-zero while agentos-update holds its lock
   | { name: 'reboot' }
   | { name: 'poweroff' }
   | { name: 'desktop-start'; n: number }
@@ -53,7 +58,10 @@ export function argv(a: Action): string[] {
     case 'github-keys': need(GITHUB_USER_RE.test(a.user), 'GitHub user'); return [...sudo, CONFIG, 'github-keys', a.user];
     case 'restart': need(UNIT_RE.test(a.unit), 'unit'); return [...sudo, 'systemctl', 'restart', a.unit];
     case 'journal': need(UNIT_RE.test(a.unit), 'unit'); return [...sudo, 'journalctl', '-u', a.unit, '-f', '-n', '200', '-o', 'short-iso'];
-    case 'update': return ['/usr/local/bin/agentos-update'];
+    case 'update': return [UPDATE];
+    case 'update-check': return [...sudo, UPDATE, '--check'];
+    case 'update-version': return [UPDATE, '--version'];
+    case 'update-running': return ['flock', '-n', UPDATE_LOCK, 'true'];
     case 'reboot': return [...sudo, 'systemctl', 'reboot'];
     case 'poweroff': return [...sudo, 'systemctl', 'poweroff'];
     case 'desktop-start': need(DESKTOP_RE.test(String(a.n)), 'desktop'); return ['systemctl', '--no-ask-password', 'start', `agentos-desktop@${a.n}.service`];

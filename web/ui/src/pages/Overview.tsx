@@ -1,9 +1,10 @@
+import { useState } from 'react';
 import { api } from '../api';
 import { ErrorText } from '../components/ErrorText';
 import { duration, gib, pct } from '../format';
 import { newDesktop, openTerminal } from '../quick';
 import { Link, navigate } from '../router';
-import type { CiRun, Desktop, Health, Session, Tailscale } from '../types';
+import type { CiRun, Desktop, Health, Session, Tailscale, UpdateState } from '../types';
 import { usePoll } from '../usePoll';
 
 export function Overview() {
@@ -12,11 +13,22 @@ export function Overview() {
   const desktops = usePoll(() => api<{ desktops: Desktop[] }>('/api/desktops'), 5000);
   const ts = usePoll(() => api<Tailscale>('/api/system/tailscale'), 30000);
   const ci = usePoll(() => api<CiRun[]>('/api/ci/runs?limit=1'), 10000);
+  const update = usePoll(() => api<UpdateState>('/api/update'), 300000);
+  const [notes, setNotes] = useState(false);
+  const avail = update.data?.available;
   const last = ci.data?.[0];
   const h = health.data;
   return (
     <section>
       <h1>Overview</h1>
+      {avail && (
+        <div className="panel banner">
+          <strong>AgentOS {avail} is available</strong>{' '}
+          {update.data?.notes && <button onClick={() => setNotes((n) => !n)}>{notes ? 'Hide' : "What's new"}</button>}{' '}
+          <Link to="/system">Update on the System page</Link>
+          {notes && <pre className="notes">{update.data?.notes}</pre>}
+        </div>
+      )}
       <ErrorText error={health.error} />
       {h && (
         <div className="cards">

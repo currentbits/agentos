@@ -6,14 +6,15 @@ code, pre { font-family: ui-monospace, monospace; }
 button, input, select { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; }
 button { cursor: pointer; }
 button:disabled { opacity: .5; cursor: default; }
-.layout { display: grid; grid-template: "head head" auto "nav main" 1fr / 180px 1fr; min-height: 100vh; }
+.layout { display: grid; grid-template: "head head" auto "nav main" 1fr "nav foot" auto / 180px 1fr; min-height: 100vh; }
 header { grid-area: head; display: flex; gap: 16px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--line); }
 header .login { margin-left: auto; color: var(--muted); }
 nav { grid-area: nav; display: flex; flex-direction: column; padding: 12px; gap: 4px; border-right: 1px solid var(--line); }
 nav a { padding: 8px 10px; border-radius: 6px; text-decoration: none; color: var(--text); }
 nav a.active { background: var(--panel); }
 main { grid-area: main; padding: 16px 24px; min-width: 0; }
-@media (max-width: 800px) { .layout { grid-template: "head" auto "nav" auto "main" 1fr / 1fr; } nav { flex-direction: row; overflow-x: auto; border-right: 0; } }
+footer { grid-area: foot; padding: 8px 24px; color: var(--muted); font-size: 12px; }
+@media (max-width: 800px) { .layout { grid-template: "head" auto "nav" auto "main" 1fr "foot" auto / 1fr; } nav { flex-direction: row; overflow-x: auto; border-right: 0; } }
 .cards, .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
 .grid { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
 .card, .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 16px; margin-bottom: 12px; }
@@ -42,3 +43,5 @@ fieldset { border: 0; padding: 0; display: flex; gap: 16px; }
 .ci-queued, .ci-running, .ci-cancelled, .ci-skipped, .ci-pending { color: var(--muted); }
 .copy { display: flex; gap: 8px; align-items: center; margin: 4px 0; }
 .copy code { overflow-wrap: anywhere; }
+.banner { border-color: var(--accent); }
+.notes { white-space: pre-wrap; max-height: 240px; overflow: auto; background: var(--bg); padding: 8px; }

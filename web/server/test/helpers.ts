@@ -31,6 +31,8 @@ export function fakeDeps(reply: (argv: string[], opts?: RunOpts) => Partial<RunR
     novncRoot: null,
     vncTokenDir: realpathSync(mkdtempSync(join(tmpdir(), 'agentos-web-vnc-'))),
     bridgePath: fileURLToPath(new URL('../../../tools/solenta-bridge', import.meta.url)),
+    updateState: join(realpathSync(mkdtempSync(join(tmpdir(), 'agentos-web-update-'))), 'update.json'),
+    updateLog: join(realpathSync(mkdtempSync(join(tmpdir(), 'agentos-web-update-'))), 'agentos-update.log'),
     ...over,
   };
   return { deps, calls, audits };

@@ -15,6 +15,11 @@ export interface CiRun {
 }
 export interface CiRemote { name: string; path: string; remote_add: string }
 export interface PreflightItem { item: string; ok: boolean; detail: string }
+export interface UpdateState {
+  installed: string | null; available: string | null; notes_url: string | null; notes: string;
+  checked_at: string | null; error: string | null; running: boolean; ciActive: string[];
+}
+export interface UpdateLog { running: boolean; text: string }
 export interface SolentaStatus {
   host: string; remoteHost: string; remotePath: string | null; tailscaleSsh: boolean;
   hostKeys: { type: string; fingerprint: string }[]; keyscan: string;

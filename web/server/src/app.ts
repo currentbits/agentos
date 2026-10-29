@@ -16,6 +16,7 @@ import { TOKEN_DIR, vncRoutes } from './vnc.js';
 import { systemRoutes } from './system.js';
 import { ciRoutes } from './ci.js';
 import { solentaRoutes } from './solenta.js';
+import { updateRoutes } from './update.js';
 
 export interface Deps {
   run: Runner;
@@ -27,6 +28,8 @@ export interface Deps {
   novncRoot: string | null;
   vncTokenDir: string;
   bridgePath: string;     // tools/solenta-bridge, served for download by the Solenta card
+  updateState: string;    // update.json, written by agentos-update --check (root, world-readable)
+  updateLog: string;      // the last agentos-update run's log
 }
 
 export function cachedTailnetName(run: Runner, ttlMs = 60_000): () => Promise<string | null> {
@@ -56,6 +59,8 @@ export function defaultDeps(): Deps {
     novncRoot: '/usr/share/novnc',
     vncTokenDir: TOKEN_DIR,
     bridgePath: '/usr/local/share/agentos/solenta-bridge',
+    updateState: '/var/lib/agentos/update.json',
+    updateLog: '/var/log/agentos-update.log',
   };
 }
 
@@ -100,6 +105,7 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   systemRoutes(app, deps);
   ciRoutes(app, deps);
   solentaRoutes(app, deps);
+  updateRoutes(app, deps);
 
   // Only what DesktopView imports (core/rfb.js and the vendor/ modules it loads), not noVNC's own
   // app (vnc.html and friends). Separate roots, so "core/../vnc.html" can't climb out.
