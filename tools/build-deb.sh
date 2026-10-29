@@ -92,6 +92,7 @@ inside() {  # runs in the container: /src (the repo, read-only) -> /out/agentos_
   if [ "$AGENTOS_DEV_SOURCE" = 1 ]; then
     sed -i 's/^Types: deb$/# Development build: no repo URL or signing key yet (tools\/build-deb.sh, AGENTOS_DEV=1).\nEnabled: no\nTypes: deb/' \
       "$S/etc/apt/sources.list.d/agentos.sources"
+    grep -qx 'Enabled: no' "$S/etc/apt/sources.list.d/agentos.sources" || { echo "build-deb: could not disable the dev apt source" >&2; exit 1; }
   fi
   chmod 0440 "$S/etc/sudoers.d/agent"
   # Everything in /etc is a conffile: a local edit is kept on upgrade (the new file lands as .dpkg-dist).
@@ -111,6 +112,7 @@ cd "$(dirname "$0")/.."
 SRC=package/etc/apt/sources.list.d/agentos.sources
 KEY=package/usr/share/keyrings/agentos-archive.gpg
 dev=0
+[ -f "$SRC" ] || die "missing $SRC"
 if grep -q '^URIs: https://OWNER\.github\.io/REPO/apt$' "$SRC" || [ ! -s "$KEY" ]; then
   [ "${AGENTOS_DEV:-0}" = 1 ] || die "the AgentOS apt repo is not set up yet: set its URL in $SRC and commit its public key as $KEY (docs/updates.md, owner steps), or build with AGENTOS_DEV=1 for a development image whose AgentOS update source is disabled"
   dev=1

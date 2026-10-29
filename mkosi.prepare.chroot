@@ -34,7 +34,7 @@ cp /etc/skel/.profile /home/agent/.profile
 chown agent:agent /home/agent/.bashrc /home/agent/.profile
 
 for c in claude codex opencode grok; do
-  as_agent "command -v $c >/dev/null" || { echo "agent CLI '$c' not on PATH after install" >&2; exit 1; }
+  as_agent "AGENTOS_WHICH=1 /usr/local/bin/$c >/dev/null" || { echo "agent CLI '$c' not installed (the /usr/local/bin wrapper found no real binary)" >&2; exit 1; }
 done
 
 # XFCE: ship the default panel config so the first start shows no "Panel: use default config?" dialog.
