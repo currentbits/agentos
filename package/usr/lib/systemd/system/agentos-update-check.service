@@ -1,0 +1,8 @@
+[Unit]
+Description=Check for a new AgentOS release (writes /var/lib/agentos/update.json; installs nothing)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/agentos-update --check

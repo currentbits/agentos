@@ -1,25 +1,161 @@
 #!/bin/bash
-# Update OS packages and every agent CLI/toolchain. Manual by design: never mid-task.
+# Update AgentOS itself, the Debian packages, and every agent CLI/toolchain. Manual by design (never
+# mid-task): the box checks daily and tells the owner, it never installs AgentOS on its own.
+#   agentos-update                 as agent: the agentos package, then apt, then the CLIs and toolchains
+#   agentos-update --check         refresh only the AgentOS source and write update.json (root, via sudo)
+#   agentos-update --rollback [V]  as agent: list the AgentOS versions in the repo and install V
+#                                  (default: the newest one older than the installed one)
+#   agentos-update --version       print the installed AgentOS version
+#   agentos-update --notice        print "AgentOS X available: ..." when update.json says so (MOTD)
+#   agentos-update --issue         refresh the console notice in /run/issue.d from update.json (root)
 set -euo pipefail
-[ "$(id -un)" = agent ] || { echo "run as the agent user" >&2; exit 2; }
-# shellcheck source=/dev/null
-. /etc/profile.d/agentos.sh
+# Tests point AGENTOS_STATE (and the rest) at scratch paths and run unprivileged, without sudo.
+STATE=${AGENTOS_STATE:-/var/lib/agentos}
+SOURCES=${AGENTOS_SOURCES:-/etc/apt/sources.list.d/agentos.sources}
+ISSUE=${AGENTOS_ISSUE:-/run/issue.d/60-agentos-update.issue}
+LOCK=${AGENTOS_UPDATE_LOCK:-/run/lock/agentos-update.lock}
+ULOG=${AGENTOS_UPDATE_LOG:-/var/log/agentos-update.log}
+VERSION_RE='^[0-9][A-Za-z0-9.+~]*$'
+# Refresh only the AgentOS source: List-Cleanup=0 keeps the other sources' lists, and --error-on=any
+# makes a bad signature or an unreachable repo an error (plain apt-get update exits 0 on both and
+# keeps the old lists).
+APT_AGENTOS="-o Dir::Etc::sourcelist=$(printf %q "$SOURCES") -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0"
+# A locally edited conffile is kept (the new one is saved as .dpkg-dist): an update never prompts.
+APT_CONF="-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold -o DPkg::Lock::Timeout=300"
 
-FAILED=0
-LOG=$(mktemp /tmp/agentos-update.XXXXXX.log)
-trap 'rm -f "$LOG"' EXIT
-step() {  # step <label> <command...>
-  local label=$1; shift
-  if "$@" >"$LOG" 2>&1; then echo "ok    $label"
-  else echo "FAIL  $label (see below)"; tail -5 "$LOG" | sed 's/^/      /'; FAILED=1; fi
+installed() { dpkg-query -W -f '${Version}' agentos 2>/dev/null || true; }
+as_root() { [ "$(id -u)" = 0 ] || [ -n "${AGENTOS_STATE:-}" ] || exec sudo -n "$0" "$@"; }
+source_problem() {  # why the AgentOS source can't be used, or nothing
+  if [ ! -f "$SOURCES" ]; then echo "no AgentOS update source ($SOURCES is missing)"
+  elif grep -qiE '^Enabled:[[:space:]]*no[[:space:]]*$' "$SOURCES"; then echo "the AgentOS update source is disabled (development build)"
+  fi
+}
+notice() {
+  local a
+  a=$(jq -r '.available // empty' "$STATE/update.json" 2>/dev/null) || return 0
+  if [[ $a =~ $VERSION_RE ]]; then printf 'AgentOS %s available: run agentos-update (or use the web UI)\n' "$a"; fi
+}
+write_issue() {  # agetty shows /run/issue.d/*.issue after /etc/issue (the version can't hold a "\")
+  local n; n=$(notice)
+  if [ -n "$n" ]; then install -d "$(dirname "$ISSUE")"; printf '%s\n\n' "$n" > "$ISSUE"; else rm -f "$ISSUE"; fi
 }
 
-step "apt"      sudo bash -c 'apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 -y -qq full-upgrade'
-step "claude"   claude update
-step "codex"    npm install -g @openai/codex@latest
-step "opencode" opencode upgrade
-step "grok"     bash -c 'set -o pipefail; grok update 2>/dev/null || curl -fsSL https://x.ai/cli/install.sh | bash'
-step "rustup"   rustup update
-step "bun"      bun upgrade
-step "playwright" bash -c 'npm install -g playwright@latest && playwright install chromium'
-exit $FAILED
+check() {
+  local inst cand avail="" err out base notes="" tmp
+  exec 9<"$LOCK"
+  flock -n 9 || { echo "agentos-update is running; check skipped" >&2; return 0; }
+  inst=$(installed)
+  err=$(source_problem)
+  [ -n "$err" ] || [ -n "$inst" ] || err="the agentos package is not installed"
+  if [ -z "$err" ]; then
+    # shellcheck disable=SC2086 # APT_AGENTOS is a list of words
+    if out=$(apt-get update -qq --error-on=any $APT_AGENTOS 2>&1); then
+      cand=$(apt-cache policy agentos | sed -n 's/^ *Candidate: //p')
+      if [[ $cand =~ $VERSION_RE ]] && dpkg --compare-versions "$cand" gt "$inst"; then avail=$cand; fi
+    else
+      err=$(printf '%s\n' "$out" | sed -n 's/^E: //p' | head -1 | cut -c1-300)
+      err=${err:-apt-get update failed}
+    fi
+  fi
+  base=$(sed -n 's/^URIs:[[:space:]]*//p' "$SOURCES" 2>/dev/null | head -1); base=${base%/}
+  # The notes are untrusted text: at most 4 KB, shown as plain text by the web UI and the console.
+  if [ -n "$avail" ]; then
+    notes=$(curl -fsS --max-time 20 --max-filesize 65536 "$base/notes/$avail.md" 2>/dev/null | head -c 4096) || notes=
+  fi
+  tmp=$(mktemp "$STATE/.update.json.XXXXXX")
+  jq -n --arg i "$inst" --arg a "$avail" --arg u "${avail:+$base/notes/$avail.md}" --arg n "$notes" \
+    --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg e "$err" \
+    'def opt: if . == "" then null else . end;
+     {installed: ($i | opt), available: ($a | opt), notes_url: ($u | opt), notes: $n, checked_at: $t, error: ($e | opt)}' > "$tmp"
+  chmod 644 "$tmp"
+  mv "$tmp" "$STATE/update.json"
+  write_issue
+  if [ -n "$err" ]; then echo "AgentOS update check failed: $err"
+  elif [ -n "$avail" ]; then echo "AgentOS $avail is available (installed: $inst)"; [ -z "$notes" ] || printf '\n%s\n' "$notes"
+  else echo "AgentOS $inst is up to date"; fi
+}
+
+FAILED=0
+say() {  # to the update log, and to stdout while anyone still reads it
+  printf '%s\n' "$*" >> "$ULOG"
+  printf '%s\n' "$*" 2>/dev/null || true
+}
+step() {  # step <label> <command...>
+  local label=$1 l; shift
+  if "$@" >"$LOG" 2>&1; then say "ok    $label"
+  else say "FAIL  $label (see below)"; while IFS= read -r l; do say "      $l"; done < <(tail -5 "$LOG"); FAILED=1; fi
+}
+begin() {  # lock, then log: shared by the update and the rollback
+  [ "$(id -un)" = agent ] || { echo "run as the agent user" >&2; exit 2; }
+  exec 9<"$LOCK"
+  flock -n 9 || { echo "agentos-update is already running" >&2; exit 3; }
+  # Started from the web UI, this process outlives agentos-web's restart (KillMode=process), but its
+  # stdout then has no reader: ignore SIGPIPE and keep going; the web UI reads $ULOG instead.
+  trap '' PIPE
+  : > "$ULOG"
+  LOG=$(mktemp /tmp/agentos-update.XXXXXX.log)
+  trap 'rm -f "$LOG"' EXIT
+  say "== agentos-update $* $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+finish() {  # unlock, refresh update.json (and the console/MOTD notice), report
+  flock -u 9
+  sudo -n "$0" --check >/dev/null 2>&1 || true
+  say "== done: $([ "$FAILED" = 0 ] && echo ok || echo 'with failures')"
+  exit "$FAILED"
+}
+
+update() {
+  local why ids
+  begin
+  # shellcheck source=/dev/null
+  . /etc/profile.d/agentos.sh
+  ids=$(agentos-ci list --json --limit 200 2>/dev/null | jq -r '[.[] | select(.status == "running" or .status == "queued") | .id] | join(" ")' 2>/dev/null) || ids=
+  [ -z "$ids" ] || say "warning: CI runs in progress: $ids (they keep running; agentos-web restarts during the update)"
+  why=$(source_problem)
+  if [ -n "$why" ]; then say "skip  agentos ($why)"
+  else step "agentos" sudo bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq --error-on=any $APT_AGENTOS && apt-get -y -qq $APT_CONF install --only-upgrade agentos"
+  fi
+  step "apt"      sudo bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq && apt-get -y -qq $APT_CONF full-upgrade"
+  step "claude"   claude update
+  step "codex"    npm install -g @openai/codex@latest
+  step "opencode" opencode upgrade
+  step "grok"     bash -c 'set -o pipefail; grok update 2>/dev/null || curl -fsSL https://x.ai/cli/install.sh | bash'
+  step "rustup"   rustup update
+  step "bun"      bun upgrade
+  step "playwright" bash -c 'npm install -g playwright@latest && playwright install chromium'
+  finish
+}
+
+rollback() {
+  local why inst target v vers=()
+  begin --rollback "$@"
+  why=$(source_problem)
+  [ -z "$why" ] || { say "FAIL  rollback ($why)"; exit 1; }
+  # shellcheck disable=SC2086,SC2024 # APT_AGENTOS is a list of words; $LOG is agent's own file
+  if ! sudo apt-get update -qq --error-on=any $APT_AGENTOS >"$LOG" 2>&1; then
+    say "FAIL  rollback (the AgentOS repo could not be read)"; while IFS= read -r v; do say "      $v"; done < <(tail -5 "$LOG"); exit 1
+  fi
+  inst=$(installed)
+  mapfile -t vers < <(apt-cache madison agentos | awk -F'|' '{gsub(/ /, "", $2); print $2}')   # newest first
+  say "AgentOS versions in the repo (installed: ${inst:-none}):"
+  for v in "${vers[@]}"; do say "  $v"; done
+  target=${1:-}
+  if [ -z "$target" ]; then
+    for v in "${vers[@]}"; do if dpkg --compare-versions "$v" lt "$inst"; then target=$v; break; fi; done
+    [ -n "$target" ] || { say "FAIL  rollback (no version older than $inst in the repo)"; exit 1; }
+  fi
+  printf '%s\n' "${vers[@]}" | grep -qxF -- "$target" || { say "FAIL  rollback ($target is not in the repo)"; exit 1; }
+  # Migrations are forward-only and safe to run again: a rollback does not undo them.
+  step "agentos $target" sudo bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get -y -qq --allow-downgrades $APT_CONF install agentos=$(printf %q "$target")"
+  finish
+}
+
+case "${1:-}" in
+  "")         update ;;
+  --check)    as_root "$@"; check ;;
+  --rollback) shift; rollback "$@" ;;
+  --version)  v=$(installed); [ -n "$v" ] || { echo "agentos is not installed" >&2; exit 1; }; echo "$v" ;;
+  --notice)   notice ;;
+  --issue)    as_root "$@"; write_issue ;;
+  *)          sed -n '4,10s/^# \{0,1\}//p' "$0" >&2; exit 2 ;;
+esac
