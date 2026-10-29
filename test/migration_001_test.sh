@@ -1,9 +1,10 @@
 #!/bin/bash
 # Unit test for migration 001 (moves AgentOS's units from /etc/systemd/system into the package's
-# /usr/lib/systemd/system, dropping the stale /etc copy only when no package owns it, removing only
-# that unit's own enablement symlinks, and re-enabling it from /usr/lib if it was enabled). dpkg and
-# systemctl are fakes that log argv; AGENTOS_ETC_UNITS/AGENTOS_USR_UNITS point the migration at a
-# scratch E/U tree instead of the real /etc and /usr/lib.
+# /usr/lib/systemd/system, setting the stale /etc copy aside as "<name>.pre-agentos" -- a suffix
+# systemd's unit loader never matches, so it's as good as gone to systemd -- only when no package
+# owns it, removing only that unit's own enablement symlinks, and re-enabling it from /usr/lib if it
+# was enabled). dpkg and systemctl are fakes that log argv; AGENTOS_ETC_UNITS/AGENTOS_USR_UNITS point
+# the migration at a scratch E/U tree instead of the real /etc and /usr/lib.
 set -euo pipefail
 R=$(cd "$(dirname "$0")/.." && pwd)
 M=$R/package/usr/local/lib/agentos/migrations/001-units-to-usr-lib.sh
@@ -51,8 +52,9 @@ printf 'unit\n' > "$E/agentos-pkgowned.service"
 printf 'unit\n' > "$U/agentos-pkgowned.service"
 ln -s "$E/agentos-pkgowned.service" "$E/multi-user.target.wants/agentos-pkgowned.service"
 
-# A stale, package-less /etc copy that the package now ships in /usr/lib: removed, along with only
-# its own enablement symlink; it was enabled, so it is re-enabled (from the /usr/lib copy).
+# A stale, package-less /etc copy that the package now ships in /usr/lib: moved aside, along with
+# only its own enablement symlink removed; it was enabled, so it is re-enabled (from the /usr/lib
+# copy).
 printf 'unit\n' > "$E/agentos-remove.service"
 printf 'unit\n' > "$U/agentos-remove.service"
 ln -s "$E/agentos-remove.service" "$E/multi-user.target.wants/agentos-remove.service"
@@ -70,12 +72,16 @@ run
 [ -L "$E/multi-user.target.wants/agentos-pkgowned.service" ] || fail "the package-owned unit's enablement symlink was removed"
 ! grep -q agentos-pkgowned "$L" || fail "the package-owned unit was touched: $(cat "$L")"
 
-[ ! -e "$E/agentos-remove.service" ] || fail "the stale unit file was not removed"
+[ ! -e "$E/agentos-remove.service" ] || fail "the stale unit file is still at its original name"
+[ -f "$E/agentos-remove.service.pre-agentos" ] && [ ! -L "$E/agentos-remove.service.pre-agentos" ] || fail "the stale unit file was not moved aside"
+[ "$(cat "$E/agentos-remove.service.pre-agentos")" = unit ] || fail "the moved-aside file lost its content"
 [ ! -e "$E/multi-user.target.wants/agentos-remove.service" ] || fail "its enablement symlink was not removed"
-grep -qx 'systemctl daemon-reload' "$L" || fail "no daemon-reload after removing a unit: $(cat "$L")"
+grep -qx 'systemctl daemon-reload' "$L" || fail "no daemon-reload after moving a unit aside: $(cat "$L")"
 grep -qx 'systemctl enable --quiet agentos-remove.service' "$L" || fail "the unit was not re-enabled from /usr/lib: $(cat "$L")"
 
-# Safe to run again: nothing left to migrate for agentos-remove.service, no systemctl calls at all.
+# Safe to run again: the moved-aside file no longer matches the "agentos-*.service" glob (it ends
+# in ".pre-agentos", not ".service"), so there's nothing left to migrate for it, no systemctl calls
+# at all.
 : > "$L"
 run
 [ ! -s "$L" ] || fail "re-run touched systemctl: $(cat "$L")"
