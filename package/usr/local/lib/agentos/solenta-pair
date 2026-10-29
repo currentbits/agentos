@@ -9,6 +9,7 @@ H=${HOME:-/home/agent}
 SSH_DIR=${AGENTOS_SSH_DIR:-/etc/ssh}
 WRAPPER=${AGENTOS_WRAPPER:-/usr/local/lib/agentos/cli-wrapper}
 PF_PATH=${AGENTOS_PREFLIGHT_PATH:-/usr/local/bin:/usr/bin:/bin}
+HOSTNAME_FILE=${AGENTOS_HOSTNAME_FILE:-/proc/sys/kernel/hostname}
 REPO_RE='^(https://[^[:space:]]+|git@[^[:space:]:]+:[^[:space:]]+|ssh://[^[:space:]]+)$'
 
 item() { jq -cn --arg item "$1" --argjson ok "$2" --arg detail "$3" '{item: $item, ok: $ok, detail: $detail}'; }
@@ -26,7 +27,7 @@ preflight() {
       item "$c" false "$out"
     fi
   done
-  if mkdir -p "$H/.solenta" 2>/dev/null && [ -w "$H/.solenta" ]; then item ".solenta writable" true "$H/.solenta"
+  if solenta_dir_writable; then item ".solenta writable" true "$H/.solenta"
   else item ".solenta writable" false "$H/.solenta is not writable"; fi
   if [ -n "${1:-}" ]; then
     if out=$(env -i HOME="$H" PATH="$PF_PATH" git -C "$1" rev-parse --show-toplevel 2>&1); then item "git checkout" true "$out"
@@ -34,18 +35,27 @@ preflight() {
   fi
 }
 
+# .solenta_writable: true if $H/.solenta exists and is writable, or is absent and its parent ($H)
+# is writable. Never creates it -- a GET (status) must have no side effects.
+solenta_dir_writable() {
+  if [ -e "$H/.solenta" ]; then [ -d "$H/.solenta" ] && [ -w "$H/.solenta" ]
+  else [ -w "$H" ]; fi
+}
+
 status() {
   local path=${1:-} ts dns ip host tsssh keys ver token
   ts=$("${TAILSCALE:-tailscale}" status --json 2>/dev/null) || ts='{}'
   dns=$(jq -r '.Self.DNSName // "" | rtrimstr(".")' <<< "$ts" 2>/dev/null) || dns=
   ip=$(jq -r '.Self.TailscaleIPs[0] // ""' <<< "$ts" 2>/dev/null) || ip=
-  host=${dns:-${ip:-$(hostname)}}
+  host=${dns:-${ip:-$(cat "$HOSTNAME_FILE" 2>/dev/null || echo localhost)}}
   # tailscaled lists SSH host keys for a node only while Tailscale SSH serves it.
   tsssh=$(jq '(.Self.sshHostKeys // .Self.SSH_HostKeys // []) | length > 0' <<< "$ts" 2>/dev/null) || tsssh=false
   keys=$(for f in "$SSH_DIR"/ssh_host_*_key.pub; do
            [ -r "$f" ] || continue
-           read -r t _ < "$f"
-           jq -cn --arg type "$t" --arg fp "$(ssh-keygen -l -f "$f" | awk '{print $2}')" '{type: $type, fingerprint: $fp}'
+           read -r t _ < "$f" 2>/dev/null || continue
+           fp=$(ssh-keygen -l -f "$f" 2>/dev/null | awk '{print $2}') || continue
+           [ -n "$fp" ] || continue
+           jq -cn --arg type "$t" --arg fp "$fp" '{type: $type, fingerprint: $fp}'
          done | jq -cs .)
   ver=$(jq -r '.version // ""' "$H/solenta/resources/app/package.json" 2>/dev/null) || ver=
   token=false; [ -f "${XDG_CONFIG_HOME:-$H/.config}/Solenta/web-token" ] && token=true

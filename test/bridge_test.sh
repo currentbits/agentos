@@ -49,6 +49,13 @@ done
 kill "$rp"; wait "$rp" 2>/dev/null || true
 grep -qx -- "-N -T -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -R 127.0.0.1:53121:127.0.0.1:53121 -R 127.0.0.1:61002:127.0.0.1:61002 -- agent@100.64.0.2" "$d/ssh.log" || fail "run argv: $(cat "$d/ssh.log")"
 [ "$(grep -c 'agent@box1.ts.net' "$d/ssh.log")" -ge 2 ] || fail "no retry"
+# Reinstalling by running the already-installed copy itself (src and dest are the same file) must
+# still work: BSD `cp` onto itself fails ("identical, not copied"), so the copy step must be
+# skipped (or done via a temp file + mv) rather than attempted verbatim.
+bash "$COPY" install agent@box1.ts.net agent@box3.ts.net >/dev/null || fail "reinstall from the installed copy failed"
+[ "$(cat "$d/conf")" = $'agent@box1.ts.net\nagent@box3.ts.net' ] || fail "reinstall didn't update conf"
+[ -x "$COPY" ] || fail "reinstall removed the stable copy"
+cmp -s "$COPY" "$B" || fail "copy differs from source after reinstall"
 bash "$B" uninstall >/dev/null
 [ ! -e "$d/la/x.plist" ] && grep -q "bootout gui/$(id -u)/os.agent.solenta-bridge" "$d/launchctl.log" || fail uninstall
 [ ! -e "$COPY" ] || fail "uninstall left the stable copy behind"

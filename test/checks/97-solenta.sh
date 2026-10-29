@@ -28,7 +28,11 @@ solenta_install_stub() {  # the way Solenta installs: unpack beside, then rename
   vm "rm -rf ~/.solenta-new ~/solenta && mkdir -p ~/.solenta-new/pkg && printf '%s\n' '$SOLENTA_STUB' > ~/.solenta-new/pkg/solenta &&
       chmod +x ~/.solenta-new/pkg/solenta && mv ~/.solenta-new/pkg ~/solenta && rm -rf ~/.solenta-new"
 }
-solenta_cleanup() { vm 'sudo systemctl stop agentos-solenta.service; rm -rf ~/solenta ~/solenta.old'; }
+# Stop the .path unit before the .service: otherwise systemctl warns that the service "can still
+# be activated by" the still-active path unit. Restart .path afterwards so later checks see the
+# same enabled-and-active state they'd see on a fresh boot.
+solenta_cleanup() { vm 'sudo systemctl stop agentos-solenta.path agentos-solenta.service; rm -rf ~/solenta ~/solenta.old;
+    sudo systemctl start agentos-solenta.path'; }
 check_solenta_stub_survives_logout_and_pkill() {
   local rc=0 pid1 pid2
   solenta_install_stub &&
@@ -85,6 +89,8 @@ check_solenta_skips_when_port_taken() {
   # Solenta's own nohup copy already serves 4620: the unit stays out of the way (no restart loop).
   local rc=0
   solenta_install_stub && vm 'sudo systemctl stop agentos-solenta.service &&
+    for _ in $(seq 1 20); do pgrep -f "http.server 4620" >/dev/null || break; sleep 0.5; done &&
+    ! pgrep -f "http.server 4620" >/dev/null &&
     (setsid python3 -m http.server 4620 --bind 127.0.0.1 </dev/null >/dev/null 2>&1 &) &&
     for _ in $(seq 1 20); do curl -s -o /dev/null -m 1 http://127.0.0.1:4620/ && break; sleep 0.5; done &&
     n=$(systemctl show agentos-solenta.service -p NRestarts --value) &&

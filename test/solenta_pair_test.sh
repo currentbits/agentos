@@ -25,6 +25,7 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 
 out=$(pair status -- "$h/work-repo")
 ! grep -q SUPERSECRET <<< "$out" || fail "token printed"
+[ ! -e "$h/.solenta" ] || fail "status (a GET) created $h/.solenta"
 jq -e --arg fp "$fp" --arg wr "$h/work-repo" '
   .host == "box.tail.ts.net" and .remoteHost == "agent@box.tail.ts.net" and .remotePath == $wr and
   .tailscaleSsh == true and .hostKeys == [{type: "ssh-ed25519", fingerprint: $fp}] and
@@ -40,4 +41,23 @@ for bad in 'file:///etc' '-uhttps://x' 'https://a b' 'ext::sh -c id'; do
   if pair clone "$bad" demo 2>/dev/null; then fail "clone accepted $bad"; fi
 done
 if pair clone https://example.invalid/x.git '../x' 2>/dev/null; then fail "clone accepted a bad name"; fi
+
+# A corrupt/unreadable host key must be skipped, not abort status: add a garbage .pub file and an
+# unreadable-but-present one alongside the real one.
+echo 'not a key' > "$d/ssh/ssh_host_garbage_key.pub"
+: > "$d/ssh/ssh_host_unreadable_key.pub"; chmod 000 "$d/ssh/ssh_host_unreadable_key.pub"
+out=$(pair status -- "$h/work-repo") || fail "status aborted on a corrupt host key"
+jq -e --arg fp "$fp" '.hostKeys == [{type: "ssh-ed25519", fingerprint: $fp}]' <<< "$out" >/dev/null ||
+  fail "corrupt host key not skipped cleanly: $out"
+rm -f "$d/ssh/ssh_host_garbage_key.pub"; chmod 600 "$d/ssh/ssh_host_unreadable_key.pub"; rm -f "$d/ssh/ssh_host_unreadable_key.pub"
+
+# No tailscale DNS/IP: host falls back to AGENTOS_HOSTNAME_FILE (not the `hostname` binary), and
+# status must still print JSON (not abort).
+printf '#!/bin/sh\necho "{}"\n' > "$d/fake/tailscale-empty"; chmod +x "$d/fake/tailscale-empty"
+echo my-fallback-host > "$d/hostname-file"
+out=$(HOME=$h PATH="$d/fake:$PATH" TAILSCALE="$d/fake/tailscale-empty" AGENTOS_HOSTNAME_FILE="$d/hostname-file" \
+      AGENTOS_SSH_DIR="$d/ssh" AGENTOS_WRAPPER="$W" AGENTOS_PREFLIGHT_PATH="$d/bin:$d/real:/usr/bin:/bin" "$P" status) ||
+  fail "status aborted with no tailscale host"
+jq -e '.host == "my-fallback-host" and .remoteHost == "agent@my-fallback-host"' <<< "$out" >/dev/null ||
+  fail "hostname fallback: $out"
 echo "solenta-pair OK"

@@ -106,7 +106,7 @@ run() {
 }
 
 install_agent() {
-  local b dest_esc log_esc
+  local b dest_esc log_esc src tmp
   [ $# -gt 0 ] || { echo "usage: solenta-bridge install user@box..." >&2; exit 2; }
   for b in "$@"; do [[ $b =~ $BOX_RE ]] || { echo "not user@host: $b" >&2; exit 2; }; done
   mkdir -p "$(dirname "$CONF")" "$(dirname "$PLIST")"
@@ -116,7 +116,18 @@ install_agent() {
   # protections, and it breaks outright if the download is later moved or deleted. Copy self
   # somewhere stable and point the plist at the copy instead.
   mkdir -p "$(dirname "$AGENT_COPY")"
-  cp "$(cd "$(dirname "$0")" && pwd)/$(basename "$0")" "$AGENT_COPY"
+  src=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
+  # Reinstalling from the already-installed copy (src and dest are the same file): `cp` onto
+  # itself fails (BSD cp: "identical (not copied)", exit 1). Skip the copy in that case; otherwise
+  # copy to a temp file first and `mv` it into place, so a reinstall while the launchd agent is
+  # mid-read of the old copy never sees a half-written file.
+  if [ "$src" -ef "$AGENT_COPY" ]; then
+    :
+  else
+    tmp=$(mktemp "$AGENT_COPY.XXXXXX")
+    cp "$src" "$tmp"
+    mv -f "$tmp" "$AGENT_COPY"
+  fi
   chmod 755 "$AGENT_COPY"
   dest_esc=$(xml_escape "$AGENT_COPY")
   log_esc=$(xml_escape "$HOME/Library/Logs/solenta-bridge.log")

@@ -146,6 +146,7 @@ case "${1:-}" in
                      runuser -u agent -- env -i HOME=/home/agent PATH=/usr/local/bin:/usr/bin:/bin \
                        /usr/local/lib/agentos/solenta-pair clone "$3" "$4"
                    else
+                     [ $# -le 2 ] || { echo "usage: agentos-config solenta [PATH]" >&2; exit 2; }
                      cmd_solenta "${2:-}"
                    fi ;;
   *)               echo "usage: agentos-config [set KEY VALUE|-|get KEY|add-ssh-key KEY|-|remove-ssh-key FINGERPRINT|github-keys USER|password|apply|show-mcp-token|solenta [PATH]|solenta clone URL NAME]" >&2; exit 2 ;;
