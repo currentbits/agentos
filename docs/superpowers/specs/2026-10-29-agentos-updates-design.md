@@ -81,7 +81,7 @@ On a fresh image build, `postinst` runs inside the image and must not need a run
 ## 5. Update and rollback
 
 `agentos-update` keeps its current shape: the `ok` and `FAIL` lines, and an exit code of 1 if any step failed. The steps become:
-1. **`agentos`:** `apt-get install --only-upgrade agentos` with the conffile options above. Running it first means the newest AgentOS code runs the remaining steps.
+1. **`agentos`:** `apt-get install --only-upgrade agentos` with the conffile options above. Running it first does not make *this* run's remaining steps use the newest code: bash already has the current `agentos-update` loaded into memory. The newest code takes effect the next time `agentos-update` runs, including the post-update `--check` that `finish()` already triggers as a fresh process.
 2. **`apt`:** a full upgrade, as today.
 3. **The agent CLIs and toolchains,** as today.
 

@@ -6,7 +6,7 @@ AgentOS updates itself from its own signed apt repository. The box checks once a
 
 `agentos-update` (or **Update** on the web UI's System page) runs three steps, in this order:
 
-1. **AgentOS:** the `agentos` package. It holds everything AgentOS installs itself: the scripts in `/usr/local/{bin,sbin}`, `/usr/local/lib/agentos` (the web UI, `agentos-ci`, the MCP servers and their Python venv, the migrations), `act`, the Solenta bridge, the systemd units and AgentOS's files in `/etc`. It runs first, so the remaining steps run the new code.
+1. **AgentOS:** the `agentos` package. It holds everything AgentOS installs itself: the scripts in `/usr/local/{bin,sbin}`, `/usr/local/lib/agentos` (the web UI, `agentos-ci`, the MCP servers and their Python venv, the migrations), `act`, the Solenta bridge, the systemd units and AgentOS's files in `/etc`. It runs first, but that alone doesn't make the rest of *this* run use the new code: bash already has this invocation's `agentos-update` script loaded into memory, so steps 2 and 3 below still run with the script that started. The new `agentos-update` takes effect the next time it's invoked — which happens right after, when this run's own `finish()` runs the post-update `agentos-update --check` as a fresh process.
 2. **Debian packages:** a full upgrade, which also pulls in any Debian package a new AgentOS release depends on.
 3. **The agent CLIs and toolchains** (Claude Code, Codex, opencode, Grok, rustup, bun, Playwright), through their own updaters.
 
@@ -36,7 +36,7 @@ Migrations (one-time steps a release runs on update, from `/usr/local/lib/agento
 
 - The image trusts the AgentOS repository only through its own key, `/usr/share/keyrings/agentos-archive.gpg`, named by `Signed-By:` in `/etc/apt/sources.list.d/agentos.sources`. That key is trusted for this repository and nothing else, and no other key is trusted for it. A missing or wrong signature fails the check and the update.
 - The repository is served over HTTPS from GitHub Pages. The signing key's private half exists only as the GitHub Actions secret `AGENTOS_APT_KEY`, used only by the release job, only for `v*` tags.
-- unattended-upgrades never installs `agentos`: its allowed origins (`/etc/apt/apt.conf.d/52agentos-unattended`) are Debian security, Tailscale and Docker only. The AgentOS repository's `Origin: AgentOS` matches none of them, so apt pins it at `-32768` and unattended-upgrades always falls back to the already-installed version.
+- unattended-upgrades never installs `agentos`: Debian's own default, `/etc/apt/apt.conf.d/50unattended-upgrades`, already allows regular Debian stable point updates as well as security updates; apt.conf.d files add to that same `Origins-Pattern` list rather than replace it, and AgentOS's own `/etc/apt/apt.conf.d/52agentos-unattended` adds only Tailscale and Docker to it. The AgentOS repository's `Origin: AgentOS` matches none of those origins, so apt pins it at `-32768` and unattended-upgrades always falls back to the already-installed version.
 - The key's fingerprint is:
 
   ```
@@ -49,7 +49,7 @@ Migrations (one-time steps a release runs on update, from `/usr/local/lib/agento
 
 ## Development builds
 
-`tools/build-deb.sh` builds the package into `mkosi.packages/`, where `mkosi build` picks it up. Until the repository URL and the signing key are set (owner steps 2 and 4), only a development build works: `AGENTOS_DEV=1 tools/build-deb.sh`. Its AgentOS source ships disabled (`Enabled: no`), so the check reports "the AgentOS update source is disabled (development build)" and `agentos-update` skips the AgentOS step. Pull requests and branch builds in CI are development builds; a `v*` tag never is.
+`tools/build-deb.sh` builds the package into `mkosi.packages/`, where `mkosi build` picks it up. Until the repository URL and the signing key are set (owner steps 3 and 2), only a development build works: `AGENTOS_DEV=1 tools/build-deb.sh`. Its AgentOS source ships disabled (`Enabled: no`), so the check reports "the AgentOS update source is disabled (development build)" and `agentos-update` skips the AgentOS step. Pull requests and branch builds in CI are development builds; a `v*` tag never is.
 
 ## Boxes installed before updates existed
 
@@ -67,6 +67,8 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--forc
 
 The package takes over the files the old image installed. Where you changed one of AgentOS's files in `/etc`, yours is kept and the package's version lands next to it as `.dpkg-dist`. Its first migration moves AgentOS's units from `/etc/systemd/system` to `/usr/lib/systemd/system`, keeping which ones you enabled. From then on, `agentos-update` works as described above.
 
+After the bootstrap, review `find /etc -name '*.dpkg-dist'`: each one is the package's version of a file you'd edited, saved next to yours instead of overwriting it. Merge in whatever changed, then remove it.
+
 ## Owner steps (once, by the repository owner)
 
 Nothing is published until these are done. The build and the release job fail with a clear message until they are.
@@ -81,8 +83,8 @@ Nothing is published until these are done. The build and the release job fail wi
    gpg --show-keys --with-fingerprint package/usr/share/keyrings/agentos-archive.gpg
    ```
    Add the contents of `agentos-apt-key.asc` as the repository's Actions secret `AGENTOS_APT_KEY` (Settings, Secrets and variables, Actions). Commit `package/usr/share/keyrings/agentos-archive.gpg`, and put the fingerprint in the Security section above.
-3. **Enable GitHub Pages** for the repository: Settings, Pages, deploy from the `gh-pages` branch, root folder. The first tag's release job creates the branch.
-4. **Set the repository URL** in `package/etc/apt/sources.list.d/agentos.sources`: replace `https://OWNER.github.io/REPO/apt` with `https://<owner>.github.io/<repo>/apt`, and commit.
-5. **Release:** write `docs/releases/<version>.md` (what's new, plain text), commit, then tag and push: `git tag v1.0.0 && git push origin v1.0.0`. The release job publishes the package, the notes, `latest.json` and the public key to `https://<owner>.github.io/<repo>/apt/`.
+3. **Set the repository URL** in `package/etc/apt/sources.list.d/agentos.sources`: replace `https://OWNER.github.io/REPO/apt` with `https://<owner>.github.io/<repo>/apt`, and commit.
+4. **Release:** write `docs/releases/<version>.md` (what's new, plain text), commit, then tag and push: `git tag v1.0.0 && git push origin v1.0.0`. The release job publishes the package, the notes, `latest.json` and the public key to `https://<owner>.github.io/<repo>/apt/`.
+5. **Enable GitHub Pages** for the repository: Settings, Pages, deploy from the `gh-pages` branch, root folder. Do this after step 4: the `gh-pages` branch doesn't exist until the first tag's release job creates it, so Pages can't be pointed at it any earlier.
 
-**Queued releases.** Release runs share one concurrency group (`apt-publish`, `cancel-in-progress: false`), so a running publish is never interrupted: a tag pushed while another release is running waits and then runs on its own. GitHub keeps only **one** waiting run per group, though: if you push a third tag while one release runs and another waits, the waiting one is cancelled (it shows as cancelled in the Actions tab). Re-run that cancelled run from the Actions tab once the others finish. Re-running is safe: `apt-publish.sh` treats republishing the identical `.deb` for a version as a no-op.
+**Queued releases.** Release runs triggered by a `v*` tag share one concurrency group (`apt-publish`, `cancel-in-progress: false`), so a running publish is never interrupted: a tag pushed while another release is running waits and then runs on its own. A release run that doesn't publish to the apt repo (a push to `main`, the weekly rebuild) gets its own group instead, so it never queues behind — or blocks — a tag's publish. GitHub keeps only **one** waiting run per group, though: if you push a third tag while one release runs and another waits, the waiting one is cancelled (it shows as cancelled in the Actions tab). Re-run that cancelled run from the Actions tab once the others finish. Re-running is safe: `apt-publish.sh` treats republishing the identical `.deb` for a version as a no-op.
