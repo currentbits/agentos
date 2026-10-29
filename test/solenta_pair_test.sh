@@ -2,8 +2,8 @@
 # Unit test for solenta-pair against fake host keys, a fake tailscale and fake CLIs.
 set -euo pipefail
 R=$(cd "$(dirname "$0")/.." && pwd)
-P=$R/mkosi.extra/usr/local/lib/agentos/solenta-pair
-W=$R/mkosi.extra/usr/local/lib/agentos/cli-wrapper
+P=$R/package/usr/local/lib/agentos/solenta-pair
+W=$R/package/usr/local/lib/agentos/cli-wrapper
 d=$(mktemp -d); trap 'rm -rf "$d"' EXIT
 h=$d/home; mkdir -p "$h/.config/Solenta" "$h/solenta/resources/app" "$d/ssh" "$d/bin" "$d/real" "$d/fake"
 ssh-keygen -q -t ed25519 -N '' -C '' -f "$d/ssh/ssh_host_ed25519_key"

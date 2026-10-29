@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-CI_DIR = Path(__file__).resolve().parents[2] / "mkosi.extra/usr/local/lib/agentos/ci"
+CI_DIR = Path(__file__).resolve().parents[2] / "package/usr/local/lib/agentos/ci"
 sys.path.insert(0, str(CI_DIR))
 
 

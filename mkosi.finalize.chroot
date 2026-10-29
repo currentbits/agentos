@@ -2,7 +2,6 @@
 # Runs inside the finished image tree, after RemoveFiles. Fails the build on leaked per-install state.
 set -euo pipefail
 
-chmod 0440 /etc/sudoers.d/agent
 chown -R agent:agent /home/agent/.config/xfce4
 
 # dpkg's path-exclude for /usr/share/locale/* (mkosi.skeleton/etc/dpkg/dpkg.cfg.d/01-agentos-nodoc)
@@ -58,6 +57,18 @@ done
 for c in claude codex opencode grok; do
   [ "$(readlink -f "/usr/local/bin/$c")" = /usr/local/lib/agentos/cli-wrapper ] || fail "/usr/local/bin/$c is not the CLI wrapper"
 done
+
+# AgentOS comes from the agentos package (tools/build-deb.sh): installed, untouched, and the only
+# source of AgentOS's units (in /usr/lib/systemd/system, never /etc, so updates never prompt).
+[ "$(dpkg-query -W -f '${Status}' agentos 2>/dev/null)" = "install ok installed" ] || fail "agentos package not installed"
+if [ -n "$(dpkg -V agentos)" ]; then fail "files differ from the agentos package: $(dpkg -V agentos | tr '\n' ' ')"; fi
+if compgen -G '/etc/systemd/system/agentos-*' >/dev/null || [ -e /etc/systemd/system/docker.service.d/10-agentos.conf ]; then
+  fail "AgentOS unit files under /etc/systemd/system: they belong in the package (/usr/lib/systemd/system)"
+fi
+# A directory the package shares keeps its owner's metadata: dpkg leaves an existing directory
+# alone, and apt unpacks polkitd (a dependency) first.
+[ "$(stat -c '%a %U:%G' /etc/polkit-1/rules.d)" = "750 root:polkitd" ] || fail "/etc/polkit-1/rules.d: $(stat -c '%a %U:%G' /etc/polkit-1/rules.d)"
+[ "$(stat -c %a /etc/sudoers.d/agent)" = 440 ] || fail "/etc/sudoers.d/agent is not 0440"
 
 W=/usr/local/lib/agentos/web
 for f in "$W/server/dist/main.js" "$W/ui/index.html" "$W/server/node_modules/node-pty/build/Release/pty.node"; do

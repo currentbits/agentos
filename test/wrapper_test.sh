@@ -3,7 +3,7 @@
 # names the current user as "the agent". Needs bash >= 4.4.
 set -euo pipefail
 R=$(cd "$(dirname "$0")/.." && pwd)
-LIB=$R/mkosi.extra/usr/local/lib/agentos
+LIB=$R/package/usr/local/lib/agentos
 d=$(mktemp -d); trap 'rm -rf "$d"' EXIT
 h=$d/home; mkdir -p "$h/.local/bin" "$h/.grok/bin" "$h/.config/agentos" "$d/bin" "$d/bin2" "$d/sys"
 printf 'ANTHROPIC_API_KEY=sk-ant-1==\nXAI_API_KEY=xai-2\nnot a line\nlower=x\n' > "$h/.config/agentos/secrets.env"
@@ -37,7 +37,7 @@ set +e; out=$(run AGENTOS_AGENT_USER=someone-else bash -c claude 2>&1); rc=$?; s
 [ "$rc" = 127 ] && [[ $out == "agentos: claude is not installed for user $me" ]] || fail "other-user claude: $out"
 # profile.d shares the parser: same keys and tool dirs, under sh and bash
 for sh in sh bash; do
-  got=$(HOME=$h AGENTOS_LIB=$LIB $sh -c '. "$1"; printf "%s|%s" "$ANTHROPIC_API_KEY" "$PATH"' sh "$R/mkosi.extra/etc/profile.d/agentos.sh")
+  got=$(HOME=$h AGENTOS_LIB=$LIB $sh -c '. "$1"; printf "%s|%s" "$ANTHROPIC_API_KEY" "$PATH"' sh "$R/package/etc/profile.d/agentos.sh")
   [[ $got == "sk-ant-1==|$h/.grok/bin:$h/.local/bin:"* ]] || fail "profile.d ($sh): $got"
 done
 echo "wrapper OK"

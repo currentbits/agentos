@@ -7,3 +7,4 @@ installer/mkosi.cache/
 installer/mkosi.tools/
 web/*/node_modules/
 web/*/dist/
+mkosi.packages/

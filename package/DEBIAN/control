@@ -1,0 +1,12 @@
+Package: agentos
+Version: 0
+Architecture: amd64
+Maintainer: AgentOS <root@localhost>
+Installed-Size: 0
+Depends: filled in by tools/build-deb.sh
+Section: admin
+Priority: optional
+Description: AgentOS: the box's own scripts, units, web UI, CI and MCP servers
+ Everything AgentOS installs itself, outside Debian packages and the agent's
+ home: /usr/local/{bin,sbin,lib/agentos,share/agentos}, the systemd units and
+ preset, and AgentOS's files in /etc. Updated with agentos-update.

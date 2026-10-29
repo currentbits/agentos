@@ -3,7 +3,7 @@
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "mkosi.extra", "usr", "local", "lib", "agentos", "computer"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "package", "usr", "local", "lib", "agentos", "computer"))
 import core  # noqa: E402
 
 # scaling: 1366 wide keeps 16:9

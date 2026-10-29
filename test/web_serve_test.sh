@@ -1,7 +1,7 @@
 #!/bin/bash
 # Unit test for web-serve (the firstboot `tailscale serve` step) against a fake tailscale.
 set -euo pipefail
-S=$(cd "$(dirname "$0")/.." && pwd)/mkosi.extra/usr/local/lib/agentos/web-serve
+S=$(cd "$(dirname "$0")/.." && pwd)/package/usr/local/lib/agentos/web-serve
 d=$(mktemp -d); trap 'rm -rf "$d"' EXIT
 cat > "$d/tailscale" <<'FAKE'
 #!/bin/bash

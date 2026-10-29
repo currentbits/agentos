@@ -39,11 +39,11 @@ jobs:
       - name: Lint and unit tests
         run: |
           shellcheck -S warning test/smoke.sh test/checks/*.sh test/env_test.sh tools/*.sh mkosi.prepare.chroot mkosi.finalize.chroot \
-            mkosi.extra/usr/local/bin/* mkosi.extra/usr/local/sbin/* mkosi.extra/usr/local/lib/agentos/*.sh \
-            mkosi.extra/etc/profile.d/agentos.sh \
-            mkosi.extra/usr/local/lib/agentos/web-serve test/web_serve_test.sh \
-            mkosi.extra/usr/local/lib/agentos/{cli-wrapper,register-mcp,solenta-pair,solenta-start} \
-            mkosi.extra/usr/local/lib/agentos/ci/post-receive tools/solenta-bridge \
+            package/usr/local/bin/* package/usr/local/sbin/* package/usr/local/lib/agentos/*.sh \
+            package/etc/profile.d/agentos.sh \
+            package/usr/local/lib/agentos/web-serve test/web_serve_test.sh \
+            package/usr/local/lib/agentos/{cli-wrapper,register-mcp,solenta-pair,solenta-start} \
+            package/usr/local/lib/agentos/ci/post-receive tools/solenta-bridge \
             test/wrapper_test.sh test/solenta_pair_test.sh test/bridge_test.sh \
             tools/build-installer.sh test/installer-boot-test.sh test/install-test.sh installer/mkosi.extra/usr/local/sbin/* \
             installer/mkosi.extra/usr/lib/agentos-installer/lib.sh
@@ -70,6 +70,20 @@ jobs:
           (cd web/server && npm ci && npm run typecheck && npx vitest run)
           (cd web/ui && npm ci && npx vitest run && npm run build)
 
+      - name: Version
+        id: ver
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then echo "v=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"; echo "deb=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else echo "v=$(date -u +%Y.%m.%d)" >> "$GITHUB_OUTPUT"; echo "deb=0.0.0~git$(date -u +%Y%m%d).${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"; fi
+
+      # A tag must build a release package (repo URL and signing key set, tools/build-deb.sh fails
+      # otherwise); every other build may be a development build with the AgentOS source disabled.
+      - name: Build the agentos package
+        env:
+          AGENTOS_VERSION: ${{ steps.ver.outputs.deb }}
+          AGENTOS_DEV: ${{ startsWith(github.ref, 'refs/tags/v') && '0' || '1' }}
+        run: tools/build-deb.sh
+
       - name: Build image
         run: mkosi -f build
 
@@ -92,12 +106,6 @@ jobs:
 
       - name: Installer end-to-end test from a virtual CD (El Torito)
         run: TMPDIR=${{ runner.temp }} INSTALL_MEDIA=cd test/install-test.sh mkosi.output/agentos-installer.raw
-
-      - name: Version
-        id: ver
-        run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then echo "v=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-          else echo "v=$(date -u +%Y.%m.%d)" >> "$GITHUB_OUTPUT"; fi
 
       - name: Convert
         if: github.event_name != 'pull_request'

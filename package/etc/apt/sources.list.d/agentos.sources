@@ -1,0 +1,8 @@
+# AgentOS releases, for agentos-update. Only the AgentOS key (Signed-By) may sign this source, and
+# that key is trusted for nothing else. The URL is set once by the repo owner (docs/updates.md).
+Types: deb
+URIs: https://OWNER.github.io/REPO/apt
+Suites: stable
+Components: main
+Architectures: amd64
+Signed-By: /usr/share/keyrings/agentos-archive.gpg

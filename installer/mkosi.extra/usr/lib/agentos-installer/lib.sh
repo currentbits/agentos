@@ -50,7 +50,7 @@ valid_ipv4() {
   for o in $1; do [ "$((10#$o))" -le 255 ] || return 1; done
 }
 valid_cidr() { [[ $1 == */* ]] && valid_ipv4 "${1%/*}" && [[ ${1#*/} =~ ^([0-9]|[12][0-9]|3[0-2])$ ]]; }
-# Keep in sync with cmd_add_ssh_key in mkosi.extra/usr/local/bin/agentos-config (the target re-validates).
+# Keep in sync with cmd_add_ssh_key in package/usr/local/bin/agentos-config (the target re-validates).
 valid_ssh_pubkey() {
   [[ $1 != *$'\n'* && $1 != *$'\r'* ]] &&
   [[ $1 =~ ^(ssh-(ed25519|rsa)|ecdsa-sha2-nistp(256|384|521)|sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh\.com)\ [A-Za-z0-9+/=]+(\ [^[:cntrl:]]*)?$ ]]

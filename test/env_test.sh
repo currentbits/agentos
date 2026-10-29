@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
-# shellcheck source=../mkosi.extra/usr/local/lib/agentos/env.sh
-. "$(dirname "$0")/../mkosi.extra/usr/local/lib/agentos/env.sh"
+# shellcheck source=../package/usr/local/lib/agentos/env.sh
+. "$(dirname "$0")/../package/usr/local/lib/agentos/env.sh"
 f=$(mktemp); trap 'rm -f "$f"' EXIT
 
 env_set "$f" FOO bar;               [ "$(env_get "$f" FOO)" = bar ]
@@ -24,7 +24,7 @@ echo "env.sh OK"
 h=$(mktemp -d); trap 'rm -rf "$f" "$h"' EXIT
 mkdir -p "$h/.config/agentos"; printf 'PAD_TOKEN=abc==\nPAD1_TOKEN=abc=\nNOEOL_TOKEN=x' > "$h/.config/agentos/secrets.env"
 for sh in sh bash; do  # dash and bash split "read" fields differently; the agent's login shell is bash
-  got=$(HOME=$h AGENTOS_LIB="$(dirname "$0")/../mkosi.extra/usr/local/lib/agentos" $sh -c '. "$1"; printf "%s|%s|%s" "$PAD_TOKEN" "$PAD1_TOKEN" "$NOEOL_TOKEN"' sh "$(dirname "$0")/../mkosi.extra/etc/profile.d/agentos.sh")
+  got=$(HOME=$h AGENTOS_LIB="$(dirname "$0")/../package/usr/local/lib/agentos" $sh -c '. "$1"; printf "%s|%s|%s" "$PAD_TOKEN" "$PAD1_TOKEN" "$NOEOL_TOKEN"' sh "$(dirname "$0")/../package/etc/profile.d/agentos.sh")
   [ "$got" = 'abc==|abc=|x' ] || { echo "profile.d parse ($sh): got '$got'" >&2; exit 1; }
 done
 echo "profile.d OK"
