@@ -2,8 +2,9 @@
 # Boxes installed before the agentos package have AgentOS's units in /etc/systemd/system, where they
 # shadow the package's copies in /usr/lib/systemd/system. Remove each old copy that no package owns
 # and that the package replaces, keeping the unit's enabled state. Safe to run again.
+# AGENTOS_ETC_UNITS / AGENTOS_USR_UNITS point the unit test at scratch dirs.
 set -euo pipefail
-E=/etc/systemd/system U=/usr/lib/systemd/system
+E=${AGENTOS_ETC_UNITS:-/etc/systemd/system} U=${AGENTOS_USR_UNITS:-/usr/lib/systemd/system}
 for f in "$E"/agentos-*.service "$E"/agentos-*.timer "$E"/agentos-*.path "$E"/docker.service.d/10-agentos.conf; do
   [ -f "$f" ] && [ ! -L "$f" ] || continue
   rel=${f#"$E"/}

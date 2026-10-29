@@ -1,7 +1,9 @@
 #!/bin/bash
 # Unit test for register-mcp: a fresh registration, a plain run leaving existing entries alone, and
-# --update rewriting AgentOS's own entries (a changed tool_timeout_sec) while keeping the user's
-# entries byte for byte, idempotently. claude and agentos-ci are fakes.
+# --update rewriting AgentOS's own entries (a changed tool_timeout_sec, and a header with trailing
+# whitespace/comment that the old exact-match code would have missed) while keeping the user's
+# entries -- including a comment line of theirs directly below one of ours -- byte for byte,
+# idempotently. claude and agentos-ci are fakes.
 set -euo pipefail
 R=$(cd "$(dirname "$0")/.." && pwd)
 RM=$R/package/usr/local/lib/agentos/register-mcp
@@ -30,12 +32,17 @@ grep -qx '\[mcp\]' "$h/.grok/config.toml" || fail "grok [mcp]"
 jq -e '.mcp["agentos-ci"].command == ["/usr/local/bin/agentos-ci-mcp"] and .mcp["agentos-computer"].enabled' "$h/.config/opencode/opencode.json" >/dev/null || fail "opencode fresh"
 [ "$(cat "$d/skill")" = install-skill ] || fail "skill"
 
-# A box from an older release: old values in AgentOS's entries, the user's own entries around them.
+# A box from an older release: old values in AgentOS's entries (one header has trailing whitespace
+# and a trailing comment, which the exact-match code used to miss entirely), the user's own entries
+# around them, including a comment of theirs directly below one of ours.
 cat > "$h/.codex/config.toml" <<'T'
 model = "gpt-5"
 
 [mcp_servers.mine]
 command = "/opt/mine"
+
+[mcp_servers.agentos-computer] # pinned by agentos
+command = "/old/agentos-computer"
 
 [mcp_servers.agentos-ci]
 command = "/usr/local/bin/agentos-ci-mcp"
@@ -43,10 +50,7 @@ tool_timeout_sec = 1800
 
 [mcp_servers.agentos-ci.env]
 OLD = "1"
-
-[mcp_servers.agentos-computer]
-command = "/usr/local/bin/agentos-computer"
-
+# my own server config, right below theirs
 [profiles.fast]
 model = "gpt-5-mini"
 T
@@ -65,7 +69,7 @@ want='model = "gpt-5"
 
 [mcp_servers.mine]
 command = "/opt/mine"
-
+# my own server config, right below theirs
 [profiles.fast]
 model = "gpt-5-mini"
 

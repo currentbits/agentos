@@ -29,14 +29,20 @@ append_atomically() {
 
 # drop_toml_table <file> <name>: rewrite the file without the [mcp_servers.<name>] table (and its
 # sub-tables), and without the blank lines just before it, so the re-appended table doesn't grow
-# the file. Everything else is kept byte for byte.
+# the file. A comment line sitting right after the dropped table (e.g. introducing the user's own
+# next table) is buffered along with blank lines and flushed in front of whatever header follows,
+# so it survives; a comment with nothing after it (end of file) is dropped with the table, same as
+# a blank line. Everything else is kept byte for byte.
+# The header match tolerates trailing whitespace and a trailing "# comment" after the closing "]";
+# a quoted key (e.g. [mcp_servers."agentos-ci"]) is out of scope and won't be recognized.
 drop_toml_table() {
   local f; f=$(readlink -f "$1")
   local tmp; tmp=$(mktemp "$f.XXXXXX")
   # shellcheck disable=SC2016 # awk program, not shell
-  awk -v h="[mcp_servers.$2]" -v p="[mcp_servers.$2." '
-    /^[[:space:]]*$/ { blanks = blanks $0 "\n"; next }
-    $0 == h || index($0, p) == 1 { skip = 1; blanks = ""; next }
+  awk -v name="$2" -v p="[mcp_servers.$2." '
+    BEGIN { hre = "^\\[mcp_servers\\." name "\\][ \t]*(#.*)?$" }
+    /^[[:space:]]*$/ || /^[[:space:]]*#/ { blanks = blanks $0 "\n"; next }
+    $0 ~ hre || index($0, p) == 1 { skip = 1; blanks = ""; next }
     /^\[/ { skip = 0 }
     !skip { printf "%s%s\n", blanks, $0 }
     { blanks = "" }
@@ -57,7 +63,8 @@ register() {
     mkdir -p "$(dirname "$f")"; touch "$f"
     [[ $f == */.codex/* && -n $extra ]] && x="$extra"$'\n' || x=
     if [ "$UPDATE" = 1 ]; then drop_toml_table "$f" "$name" || { echo "$f: updating $name failed" >&2; rc=1; continue; }; fi
-    grep -q "^\[mcp_servers\.$name\]" "$f" || append_atomically "$f" '\n[mcp_servers.%s]\ncommand = "%s"\n%s' "$name" "$cmd" "$x"
+    # Same tolerance as drop_toml_table's header match: trailing whitespace or a trailing comment.
+    grep -qE "^\[mcp_servers\.$name\][ \t]*(#.*)?\$" "$f" || append_atomically "$f" '\n[mcp_servers.%s]\ncommand = "%s"\n%s' "$name" "$cmd" "$x"
   done
   # opencode (JSON)
   f=$HOME/.config/opencode/opencode.json
