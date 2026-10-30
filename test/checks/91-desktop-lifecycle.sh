@@ -18,6 +18,9 @@ check_desktop_number_bounds() {
       test "$(stat -c %Y /tmp/.X1-lock)" = "$before"' &&
   vm 'systemctl --no-ask-password stop agentos-desktop@1.service'
 }
+check_desktop_stop_timeout() {
+  vm 'test "$(systemctl show agentos-desktop@2.service -p TimeoutStopUSec --value)" = 10s'
+}
 check_desktop_oom_priority() {
   vm 'systemctl --no-ask-password start agentos-desktop@8.service' && wait_x 8 &&
   vm 'test "$(systemctl show agentos-desktop@8 -p OOMScoreAdjust --value)" = 500' &&

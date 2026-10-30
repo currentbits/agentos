@@ -13,5 +13,8 @@ ExecStartPost=+/usr/local/lib/agentos/vnc-token add %i
 ExecStartPost=-/usr/bin/touch /run/agentos/desktops/%i.last
 ExecStopPost=+/usr/local/lib/agentos/vnc-token del %i
 KillMode=control-group
+# A desktop is scratch: an app that ignores SIGTERM (a browser, an XFCE component) must not hold a
+# stop for systemd's default 90 s (the web UI's Stop and the reaper wait on it). SIGKILL after 10 s.
+TimeoutStopSec=10s
 Restart=no
 OOMScoreAdjust=500
