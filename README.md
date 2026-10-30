@@ -72,6 +72,7 @@ sha256sum -c --ignore-missing SHA256SUMS
 
 | File | Use it for |
 |---|---|
+| [`agentos-installer-<v>.iso`](https://dl.currentbits.net/agentos/index.html) | **Bare metal, the simplest way.** The installer as one direct download from `dl.currentbits.net`: no parts, nothing to decompress. Write it to a USB stick (`dd`, Etcher), attach it as a virtual CD (iDRAC/iLO/IPMI virtual media), or as the CD/DVD of a Proxmox, VMware or Hyper-V VM, then boot in UEFI mode. Latest release only; its SHA-256 is in the release's `SHA256SUMS`. |
 | `agentos-installer-<v>.img.zst` | **Bare metal.** Decompress it (`zstd -d`), write it to a USB stick (`dd`, Etcher, or Rufus in DD mode) or attach it as a virtual CD (iDRAC/iLO/IPMI virtual media, Hyper-V DVD), then boot in UEFI mode. |
 | `agentos-<v>.qcow2` | KVM / QEMU / Proxmox / libvirt. |
 | `agentos-<v>.vhdx.zst` | Hyper-V. |
@@ -358,6 +359,7 @@ tools/convert.sh mkosi.output/agentos.raw <version> release mkosi.output/agentos
 | `web/server`, `web/ui` | The web UI: Fastify + node-pty, and React + Vite. |
 | `installer/` | The USB / virtual-CD installer image. |
 | `tools/` | `build-deb.sh`, `apt-publish.sh`, `build-installer.sh`, `convert.sh`, `solenta-bridge`. |
+| `dist/` | `agentos-dist`, the Girder worker that mirrors each release's installer to `dl.currentbits.net` as one `.iso`. |
 | `test/` | The QEMU smoke harness (`smoke.sh`, `checks/`), installer tests and unit tests. |
 | `docs/` | User docs, release notes (`docs/releases/`), and design specs and plans (`docs/superpowers/`). |
 
@@ -365,7 +367,7 @@ tools/convert.sh mkosi.output/agentos.raw <version> release mkosi.output/agentos
 
 1. Write `docs/releases/<version>.md`: what's new, in plain text.
 2. Tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`.
-3. The release job builds and tests everything, publishes the GitHub release (images, installer, checksums), and publishes the signed `agentos` package and notes to the apt repo on `gh-pages`.
+3. The release job builds and tests everything, publishes the GitHub release (images, installer, checksums), and publishes the signed `agentos` package and notes to the apt repo on `gh-pages`. Within 15 minutes, `agentos-dist` (`dist/`, on Girder) mirrors the installer to [dl.currentbits.net](https://dl.currentbits.net/agentos/index.html) as one `.iso`, after checking it against `SHA256SUMS`.
 
 Boxes see the new release within a day, or immediately with **Check now**. Untagged builds are versioned `<last tag>+git<date>.<sha>`, so they never look like an older release. See [docs/updates.md](docs/updates.md) for the owner steps, the signing key, and how concurrent releases queue.
 
