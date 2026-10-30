@@ -9,8 +9,20 @@
 # The tree is package/ plus what is built here: the Python venv, the web UI, act and the bridge. It is
 # built in a debian:trixie container, so the venv's Python (3.13) and node-pty's Node ABI (NodeSource
 # 24, the image's apt source) match the image.
+#
+# Reproducible: the container is a pinned digest, not a floating tag; the Node package and every
+# pip dependency are pinned by exact version (pip's by hash too, tools/requirements.txt); umask and
+# every staged file's mtime are fixed; and the working directories act/the web UI build in are fixed
+# paths rather than mktemp -d's random ones (node-pty's compiled addon embeds its build path).
+# Building the same commit twice must produce byte-identical .debs (tools/build-deb.sh --inside is
+# run twice and compared); if it ever doesn't, find the differing bytes before assuming it's fine.
 set -euo pipefail
 die() { echo "build-deb: $*" >&2; exit 1; }
+umask 022
+
+# Pinned by digest, not the floating "trixie" tag, so the same inputs are used on every build.
+# Bump: docker pull debian:trixie && docker inspect --format '{{index .RepoDigests 0}}' debian:trixie.
+DEBIAN_TRIXIE_DIGEST=sha256:2dc419c6d7fe3dad0a2f9fd469c34cc90b0f9ba642d8fde837fe3d7d34a0e7f1
 
 # Debian packages AgentOS's own code needs (moved here from mkosi.conf.d, so a release can add one).
 # The image's base (kernel, systemd, toolchains, docker, tailscale) stays in mkosi.conf.d.
@@ -35,6 +47,11 @@ DEPENDS=(
 ACT_VERSION=0.2.89
 ACT_SHA256=0191d6f1f3b716b5c55820032605d05fc3c1cdbf581ebeff655019e5dd1524c0
 
+# NodeSource ships only the latest build of each major; pin the exact version so two builds don't
+# silently get different bytes when NodeSource publishes a new 24.x. Bump: pin container to
+# DEBIAN_TRIXIE_DIGEST below, `apt-cache madison nodejs` inside it, take the newest nodesource line.
+NODEJS_VERSION=24.13.1-1nodesource1
+
 inside() {  # runs in the container: /src (the repo, read-only) -> /out/agentos_<version>_amd64.deb
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq --error-on=any
@@ -43,7 +60,7 @@ inside() {  # runs in the container: /src (the repo, read-only) -> /out/agentos_
   cp /src/apt/keyrings/nodesource.gpg /etc/apt/keyrings/
   cp /src/apt/sources.list.d/nodesource.sources /etc/apt/sources.list.d/
   apt-get update -qq --error-on=any
-  apt-get install -y -qq --no-install-recommends nodejs python3 python3-venv build-essential curl >/dev/null
+  apt-get install -y -qq --no-install-recommends "nodejs=$NODEJS_VERSION" python3 python3-venv build-essential curl >/dev/null
   node -e 'process.exit(process.versions.node.startsWith("24.") ? 0 : 1)' || { echo "build-deb: Node $(node --version) is not 24.x" >&2; exit 1; }
 
   local S=/build/root W wb at
@@ -51,12 +68,19 @@ inside() {  # runs in the container: /src (the repo, read-only) -> /out/agentos_
   cp -a /src/package "$S"
 
   # agentos-computer and agentos-ci deps, isolated from the system and the agent's own Python. Built
-  # at its final path: a venv is not relocatable.
+  # at its final path: a venv is not relocatable. Exact versions and hashes for mcp/pillow/pyyaml and
+  # their full dependency closure (tools/requirements.txt, header documents how to regenerate it);
+  # --require-hashes --no-deps installs exactly that set and nothing pip's own resolver might pick
+  # differently between runs.
   python3 -m venv /usr/local/lib/agentos/venv
-  /usr/local/lib/agentos/venv/bin/pip install -q --no-cache-dir --disable-pip-version-check 'mcp>=1.28,<2' 'pillow>=10' 'pyyaml>=6,<7'
+  /usr/local/lib/agentos/venv/bin/pip install -q --no-cache-dir --disable-pip-version-check \
+    --require-hashes --no-deps -r /src/tools/requirements.txt
   cp -a /usr/local/lib/agentos/venv "$S/usr/local/lib/agentos/venv"
 
-  at=$(mktemp -d)
+  # Fixed paths, not mktemp -d's random ones: node-pty's compiled addon and act's binary can embed
+  # their build directory, which must be identical across builds for the resulting .deb to match.
+  at=/build/act
+  mkdir -p "$at"
   curl -fsSL -o "$at/act.tgz" "https://github.com/nektos/act/releases/download/v$ACT_VERSION/act_Linux_x86_64.tar.gz"
   echo "$ACT_SHA256  $at/act.tgz" | sha256sum -c --quiet -
   tar -xzf "$at/act.tgz" -C "$at" act
@@ -69,7 +93,8 @@ inside() {  # runs in the container: /src (the repo, read-only) -> /out/agentos_
   # this Node with node-gyp. Host node_modules/dist are excluded: a macOS checkout must not leak
   # darwin binaries into the package.
   W=$S/usr/local/lib/agentos/web
-  wb=$(mktemp -d)
+  wb=/build/web
+  mkdir -p "$wb"
   tar -C /src/web --exclude=node_modules --exclude=dist -cf - . | tar -C "$wb" -xf -
   # One command per line: set -e ignores a failure anywhere in an && chain except its last command.
   (
@@ -103,6 +128,9 @@ inside() {  # runs in the container: /src (the repo, read-only) -> /out/agentos_
   size=$(du -sk --exclude=DEBIAN "$S" | cut -f1)
   sed -i -e "s/^Version: .*/Version: $AGENTOS_VERSION/" -e "s/^Depends: .*/Depends: $deps/" \
     -e "s/^Installed-Size: .*/Installed-Size: $size/" "$S/DEBIAN/control"
+  # Pin every staged file's mtime to the commit's own timestamp (-h: a symlink's own mtime, not
+  # its target's), the last source of non-determinism once content, owner and umask are fixed.
+  find "$S" -exec touch -h -d "@$SOURCE_DATE_EPOCH" {} +
   dpkg-deb --root-owner-group -b "$S" "/out/agentos_${AGENTOS_VERSION}_amd64.deb" >/dev/null
   chown "$OWNER_UID:$OWNER_GID" "/out/agentos_${AGENTOS_VERSION}_amd64.deb"
 }
@@ -138,6 +166,12 @@ V=$(compute_version)
 [[ $V =~ ^[0-9][A-Za-z0-9.+~]*$ ]] || die "not a usable package version: $V"
 mkdir -p mkosi.packages
 rm -f mkosi.packages/agentos_*.deb
+# Every staged file's mtime is pinned to the commit's own timestamp (reproducibility: see the file
+# header), not the build's wall-clock time. A caller-provided SOURCE_DATE_EPOCH (the
+# reproducible-builds.org convention) wins, same as every other tool that honors it -- also how a
+# tree without .git (e.g. rsynced to a build host without history) can still build reproducibly.
+SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(git log -1 --format=%ct)}
 docker run --rm -e AGENTOS_VERSION="$V" -e AGENTOS_DEV_SOURCE="$dev" -e OWNER_UID="$(id -u)" -e OWNER_GID="$(id -g)" \
-  -v "$PWD:/src:ro" -v "$PWD/mkosi.packages:/out" debian:trixie bash /src/tools/build-deb.sh --inside
+  -e SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
+  -v "$PWD:/src:ro" -v "$PWD/mkosi.packages:/out" "debian@$DEBIAN_TRIXIE_DIGEST" bash /src/tools/build-deb.sh --inside
 echo "mkosi.packages/agentos_${V}_amd64.deb"
