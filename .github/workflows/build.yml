@@ -31,7 +31,7 @@ jobs:
       - name: Host setup
         run: |
           sudo apt-get update
-          sudo apt-get install -y qemu-system-x86 qemu-utils ovmf cloud-image-utils mtools pipx shellcheck zstd tmux jq apt-utils
+          sudo apt-get install -y qemu-system-x86 qemu-utils ovmf cloud-image-utils mtools pipx shellcheck zstd tmux jq apt-utils debian-archive-keyring
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           sudo chmod 666 /dev/kvm
           pipx install "git+https://github.com/systemd/mkosi@v27"
