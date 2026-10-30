@@ -208,12 +208,23 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          IS_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
         run: |
           tag="v${{ needs.build.outputs.version }}"
           # README-download.txt is uploaded as an asset (it is listed in SHA256SUMS) and also
           # prepended to the release notes, together with the package manifest.
           cat release/README-download.txt release/MANIFEST.txt > release-notes.txt
-          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --target "$GITHUB_SHA" --title "AgentOS $tag" --notes-file release-notes.txt
+          if [ "$IS_TAG" = "true" ]; then
+            title="AgentOS $tag"
+            flags=()
+          else
+            # The weekly schedule's build: a dev build (update source disabled) that must never
+            # become GitHub's "Latest" release -- releases/latest (and so dist/mirror.py and the
+            # README's "latest release" link) would otherwise be taken over by it.
+            title="AgentOS weekly build ${{ needs.build.outputs.version }}"
+            flags=(--prerelease --latest=false)
+          fi
+          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --target "$GITHUB_SHA" --title "$title" "${flags[@]}" --notes-file release-notes.txt
           gh release upload "$tag" release/* --clobber
 
       # The apt repo on gh-pages (docs/updates.md). Tags only; the signing key is used here and

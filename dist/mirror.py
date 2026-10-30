@@ -26,11 +26,20 @@ from botocore.config import Config
 REPO = os.environ.get("GITHUB_REPO", "currentbits/agentos")
 PREFIX = os.environ.get("PREFIX", "agentos/")
 INTERVAL = int(os.environ.get("INTERVAL", "900"))
+RETRY_AFTER = int(os.environ.get("RETRY_AFTER", "21600"))  # backoff after a hash mismatch, seconds
 PART = 64 * 1024 * 1024
-TAG = re.compile(r"^v([0-9]+\.[0-9]+\.[0-9]+)$")
+MAX_REDIRECTS = 5
+# A real release tag only: vX.Y.Z, each part 1-3 digits with no leading zero (unless the whole part
+# is "0"). A weekly dev build's date tag (v2026.11.02) must never match: 2026 alone is already too
+# long, and a zero-padded month or day (02) isn't a valid part either.
+TAG = re.compile(r"^v((?:0|[1-9][0-9]{0,2})\.(?:0|[1-9][0-9]{0,3})\.(?:0|[1-9][0-9]{0,3}))$")
 # Release asset URLs are on github.com and redirect to release-assets.githubusercontent.com (seen
 # 2026-10-30); objects.githubusercontent.com is the older redirect host.
 HOSTS = {"api.github.com", "github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com"}
+
+# ponytail: process-memory only, lost on a restart -- fine, since a fresh process just retries
+# right away. version -> (time.monotonic() of the failure, frozenset of the release's asset names).
+_failed = {}
 
 
 def log(msg):
@@ -43,13 +52,40 @@ def check_url(url):
         raise ValueError(f"refusing a URL outside GitHub: {url}")
 
 
-def chunks(http, urls):
-    """The bytes of urls, concatenated, in 1 MiB chunks. Each URL, and where it redirected to, must be on GitHub."""
-    for url in urls:
+def safe_link(url, what):
+    """url if it passes check_url, else None (logged): one bad link in the release's own metadata
+    must not stop the whole index.html page from being published."""
+    try:
         check_url(url)
-        with http.get(url, stream=True, timeout=60) as r:
+        return url
+    except ValueError as e:
+        log(f"skipping {what}: {e}")
+        return None
+
+
+def _get(http, url, timeout=60):
+    """GET url, checking it and every redirect hop against the GitHub allowlist before following
+    it -- never after -- so a hostile Location header is refused before any request reaches it."""
+    check_url(url)
+    for _ in range(MAX_REDIRECTS):
+        r = http.get(url, stream=True, timeout=timeout, allow_redirects=False)
+        if r.status_code in (301, 302, 303, 307, 308):
+            location = r.headers.get("Location")
+            r.close()
+            if not location:
+                raise ValueError(f"redirect with no Location: {url}")
+            url = location
+            check_url(url)
+            continue
+        return r
+    raise ValueError(f"too many redirects: {url}")
+
+
+def chunks(http, urls):
+    """The bytes of urls, concatenated, in 1 MiB chunks."""
+    for url in urls:
+        with _get(http, url) as r:
             r.raise_for_status()
-            check_url(r.url)
             yield from r.iter_content(1 << 20)
 
 
@@ -142,6 +178,9 @@ def put(s3, bucket, key, body, ctype):
 
 
 def cycle(s3, bucket, http):
+    # At the start of every cycle, inside this function (which main() always calls inside its try):
+    # an unreachable Garage at startup is just one failed cycle, logged and retried, not a crash.
+    abort_orphans(s3, bucket)
     rel = json.loads(fetch(http, f"https://api.github.com/repos/{REPO}/releases/latest"))
     tag = rel.get("tag_name", "")
     m = TAG.match(tag)
@@ -156,8 +195,14 @@ def cycle(s3, bucket, http):
     if cur.get("version") == v:
         log(f"up to date: {v}")
         return
-    log(f"mirroring {v} (bucket has {cur.get('version')})")
     assets = {a["name"]: a["browser_download_url"] for a in rel["assets"]}
+    fp = frozenset(assets)
+    failed = _failed.get(v)
+    if failed and failed[1] == fp and time.monotonic() - failed[0] < RETRY_AFTER:
+        log(f"skipping {v}: hash mismatch {int(time.monotonic() - failed[0])}s ago; "
+            f"retrying after {RETRY_AFTER}s unless the release's assets change")
+        return
+    log(f"mirroring {v} (bucket has {cur.get('version')})")
     sums = dict((n, h) for h, n in re.findall(r"^([0-9a-f]{64})  (\S+)$", fetch(http, assets["SHA256SUMS"]).decode(), re.M))
     zst, iso = f"agentos-installer-{v}.img.zst", f"agentos-installer-{v}.iso"
     if zst not in sums:
@@ -167,10 +212,19 @@ def cycle(s3, bucket, http):
         raise ValueError(f"release has no {zst} asset")
     log(f"source: {', '.join(names)}; iso hash {'from SHA256SUMS' if iso in sums else 'not in SHA256SUMS (release predates it)'}")
     src = Source(chunks(http, [assets[n] for n in names]))
-    size, sha = upload_iso(s3, bucket, PREFIX + iso, src, sums[zst], sums.get(iso))
-    others = sorted((n, u) for n, u in assets.items() if n.startswith(f"agentos-{v}."))
+    try:
+        size, sha = upload_iso(s3, bucket, PREFIX + iso, src, sums[zst], sums.get(iso))
+    except ValueError as e:
+        if "sha256" in str(e):
+            _failed[v] = (time.monotonic(), fp)
+            log(f"remembering the hash mismatch for {v}; backing off {RETRY_AFTER}s unless its assets change")
+        raise
+    _failed.pop(v, None)
+    others = [(n, u) for n, u in sorted((n, u) for n, u in assets.items() if n.startswith(f"agentos-{v}."))
+              if safe_link(u, f"the {n} link in index.html") is not None]
+    release_url = safe_link(rel["html_url"], "the release link in index.html") or ""
     put(s3, bucket, PREFIX + iso + ".sha256", f"{sha}  {iso}\n", "text/plain; charset=utf-8")
-    put(s3, bucket, PREFIX + "index.html", index_html(v, iso, size, sha, rel["published_at"], rel["html_url"], others), "text/html; charset=utf-8")
+    put(s3, bucket, PREFIX + "index.html", index_html(v, iso, size, sha, rel["published_at"], release_url, others), "text/html; charset=utf-8")
     latest = {"version": v, "iso": iso, "size": size, "sha256": sha, "published": rel["published_at"], "release_url": rel["html_url"]}
     put(s3, bucket, PREFIX + "latest.json", json.dumps(latest, indent=2) + "\n", "application/json")
     # ponytail: one listing call; the prefix holds a handful of objects, far below its 1000-key page.
@@ -204,7 +258,6 @@ def main():
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))  # PID 1 in the container; SystemExit aborts an upload in flight
     s3, bucket, http = s3_client(), os.environ["S3_BUCKET"], requests.Session()
     log(f"agentos-dist: {REPO} -> s3://{bucket}/{PREFIX} every {INTERVAL}s")
-    abort_orphans(s3, bucket)
     while True:
         try:
             cycle(s3, bucket, http)

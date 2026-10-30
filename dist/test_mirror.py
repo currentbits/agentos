@@ -19,8 +19,8 @@ ASSETS = "https://release-assets.githubusercontent.com/github-production-release
 
 
 class Resp:
-    def __init__(self, url, body):
-        self.url, self.body = url, body
+    def __init__(self, url, status, headers, body):
+        self.url, self.status_code, self.headers, self.body = url, status, headers, body
 
     def __enter__(self):
         return self
@@ -28,24 +28,30 @@ class Resp:
     def __exit__(self, *a):
         pass
 
+    def close(self):
+        pass
+
     def raise_for_status(self):
         if self.body is None:
-            raise RuntimeError(f"404 {self.url}")
+            raise RuntimeError(f"{self.status_code} {self.url}")
 
     def iter_content(self, n):
         return (self.body[i:i + n] for i in range(0, len(self.body), n))
 
 
 class FakeGitHub:
-    """Release asset URLs on github.com answer from release-assets.githubusercontent.com, like GitHub's 302."""
+    """Release asset URLs on github.com answer with a real 302 to release-assets.githubusercontent.com
+    (Location header, empty body), like GitHub's actual redirect; mirror.py must follow it itself."""
 
     def __init__(self):
-        self.files, self.calls = {}, []
+        self.files, self.calls, self.redirects = {}, [], {}
 
-    def get(self, url, stream=True, timeout=None):
+    def get(self, url, stream=True, timeout=None, allow_redirects=False):
         self.calls.append(url)
-        final = url.replace(DL, ASSETS) if url.startswith(DL) else url
-        return Resp(final, self.files.get(url))
+        target = self.redirects.get(url)
+        if target is not None:
+            return Resp(url, 302, {"Location": target}, None)
+        return Resp(url, 200 if url in self.files else 404, {}, self.files.get(url))
 
 
 def sha(b):
@@ -64,7 +70,11 @@ def release(gh, v, img, parts=1, iso_line=True, zst_hash=None, iso_hash=None):
     step = -(-len(comp) // parts)
     assets = {n: comp[i * step:(i + 1) * step] for i, n in enumerate(names)}
     assets.update({"SHA256SUMS": sums.encode(), f"agentos-{v}.qcow2.part00": b"q", f"agentos-{v}.vmdk.zst": b"m"})
-    gh.files.update({f"{DL}/v{v}/{n}": b for n, b in assets.items()})
+    for n, b in assets.items():
+        dl_url = f"{DL}/v{v}/{n}"
+        asset_url = f"{ASSETS}/{n}"
+        gh.redirects[dl_url] = asset_url
+        gh.files[asset_url] = b
     gh.files[API] = json.dumps({
         "tag_name": f"v{v}", "draft": False, "prerelease": False,
         "html_url": f"https://github.com/currentbits/agentos/releases/tag/v{v}", "published_at": "2026-10-30T12:39:00Z",
@@ -74,6 +84,15 @@ def release(gh, v, img, parts=1, iso_line=True, zst_hash=None, iso_hash=None):
 
 IMG1 = os.urandom(20000) + b"\0" * 30000 + b"one"  # 50003 bytes: 7 parts of 8 KiB
 IMG2 = os.urandom(9000) + b"two"
+
+
+@pytest.fixture(autouse=True)
+def _reset_backoff_state():
+    """mirror._failed is process-memory global state (the hash-mismatch backoff); without this it
+    leaks between tests that happen to mirror the same version, in whichever order pytest runs them."""
+    mirror._failed.clear()
+    yield
+    mirror._failed.clear()
 
 
 @pytest.fixture
@@ -138,8 +157,11 @@ def test_split_release(s3):
     release(gh, "1.0.2", IMG2, parts=2)
     mirror.cycle(s3, BUCKET, gh)
     assert get(s3, "agentos/agentos-installer-1.0.2.iso") == IMG2
-    assert [u for u in gh.calls if ".img.zst" in u] == [f"{DL}/v1.0.2/agentos-installer-1.0.2.img.zst.part00",
-                                                        f"{DL}/v1.0.2/agentos-installer-1.0.2.img.zst.part01"]
+    # Each part is requested on github.com, then its redirect hop; filtering to the first hop
+    # checks the parts were fetched in order (the redirect-hop fix means gh.calls now also holds
+    # the release-assets.githubusercontent.com hop that follows each one).
+    assert [u for u in gh.calls if u.startswith(DL) and ".img.zst" in u] == [
+        f"{DL}/v1.0.2/agentos-installer-1.0.2.img.zst.part00", f"{DL}/v1.0.2/agentos-installer-1.0.2.img.zst.part01"]
 
 
 @pytest.mark.parametrize("bad", [{"zst_hash": "1" * 64}, {"iso_hash": "2" * 64}])
@@ -201,6 +223,75 @@ def test_orphaned_multipart_uploads_are_aborted_at_startup(s3):
     mirror.abort_orphans(s3, BUCKET)
     assert uploads(s3) == []
     assert keys(s3) == []
+
+
+def test_date_shaped_tag_is_not_mirrored(s3):
+    """A weekly dev build's tag (v<year>.<month>.<day>) must never be mirrored -- it has three
+    dot-separated numeric parts like a real vX.Y.Z release, but GitHub would mark it "latest" and
+    this mirror would then serve a dev build (update source disabled) as the download page's .iso."""
+    gh = FakeGitHub()
+    release(gh, "2026.11.02", IMG1)
+    mirror.cycle(s3, BUCKET, gh)
+    assert keys(s3) == []
+
+
+def test_cycle_aborts_orphaned_uploads_every_time_not_only_at_startup(s3):
+    gh = FakeGitHub()
+    release(gh, "1.0.1", IMG1)
+    up = s3.create_multipart_upload(Bucket=BUCKET, Key=mirror.PREFIX + "leftover")["UploadId"]
+    s3.upload_part(Bucket=BUCKET, Key=mirror.PREFIX + "leftover", UploadId=up, PartNumber=1, Body=b"x" * 100)
+    mirror.cycle(s3, BUCKET, gh)
+    assert uploads(s3) == []
+    assert get(s3, "agentos/agentos-installer-1.0.1.iso") == IMG1
+
+
+def test_malicious_redirect_hop_is_refused_before_any_request(s3):
+    """check_url must be run on each redirect hop before it is followed, not just on the final URL
+    after requests has already followed the chain: a hijacked redirect target is refused up front."""
+    gh = FakeGitHub()
+    release(gh, "1.0.1", IMG1)
+    zst_url = f"{DL}/v1.0.1/agentos-installer-1.0.1.img.zst"
+    gh.redirects[zst_url] = "https://evil.example/agentos-installer-1.0.1.img.zst"
+    with pytest.raises(ValueError, match="outside GitHub"):
+        mirror.cycle(s3, BUCKET, gh)
+    assert "https://evil.example/agentos-installer-1.0.1.img.zst" not in gh.calls
+    assert keys(s3) == []
+
+
+def test_a_bad_link_in_the_release_is_skipped_in_index_html_not_fatal(s3):
+    """check_url runs on every link going into index.html (the VM image links and the release-notes
+    link); a bad one is skipped and logged, not fetched, and does not stop the rest of the page."""
+    gh = FakeGitHub()
+    release(gh, "1.0.1", IMG1)
+    rel = json.loads(gh.files[API])
+    for a in rel["assets"]:
+        if a["name"] == "agentos-1.0.1.qcow2.part00":
+            a["browser_download_url"] = "https://evil.example/agentos-1.0.1.qcow2.part00"
+    gh.files[API] = json.dumps(rel).encode()
+    mirror.cycle(s3, BUCKET, gh)
+    assert "https://evil.example/agentos-1.0.1.qcow2.part00" not in gh.calls
+    page = get(s3, "agentos/index.html").decode()
+    assert "evil.example" not in page
+    assert "agentos-1.0.1.vmdk.zst" in page  # the other VM link is still published
+
+
+def test_hash_mismatch_backs_off_then_retries_after_RETRY_AFTER(s3, monkeypatch):
+    gh = FakeGitHub()
+    release(gh, "1.0.1", IMG1)
+    mirror.cycle(s3, BUCKET, gh)
+    release(gh, "1.0.2", IMG2, iso_hash="2" * 64)
+    clock = [1000.0]
+    monkeypatch.setattr(mirror.time, "monotonic", lambda: clock[0])
+    with pytest.raises(ValueError, match="sha256"):
+        mirror.cycle(s3, BUCKET, gh)
+    gh.calls.clear()
+    mirror.cycle(s3, BUCKET, gh)  # still inside the backoff window: no retry, no error
+    assert gh.calls == [API]
+    clock[0] += mirror.RETRY_AFTER + 1
+    gh.calls.clear()
+    with pytest.raises(ValueError, match="sha256"):
+        mirror.cycle(s3, BUCKET, gh)  # window elapsed: retries and fails again
+    assert any(".img.zst" in u for u in gh.calls)
 
 
 def test_index_html_escapes_every_value():
