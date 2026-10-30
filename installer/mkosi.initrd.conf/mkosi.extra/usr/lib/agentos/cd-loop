@@ -1,20 +1,34 @@
 #!/bin/sh
 # Booted as a (virtual) CD: Linux exposes no partitions on sr* and the GPT uses 512-byte sectors, so
-# root=PARTUUID= never appears by itself. Attach every CD that has readable media as a read-only,
-# partitioned 512-byte loop device, retrying until the root partition shows up. Polling instead of a
-# udev event: virtual media can be "present" but unreadable when udev probes it (cdrom_id says
-# ID_CDROM_MEDIA=1 while open() fails), and nothing re-triggers a one-shot unit after that.
+# root=PARTUUID= never appears by itself. Attach every CD that has media as a read-only, partitioned
+# 512-byte loop device, retrying until the root partition shows up. Polling instead of a udev event:
+# virtual media can be "present" but unreadable when udev probes it (cdrom_id says ID_CDROM_MEDIA=1
+# while open() or reads fail) and become readable later without any media-change event.
 # ponytail: 1 s poll, no upper bound here; systemd.default_device_timeout_sec (agentos_cdargs) bounds the boot.
 # (systemd >= 261 has systemd-loop@.service for this; Debian 13 has 257.)
 set -u
 uuid=$(sed -n 's/.*root=PARTUUID=\([^ ]*\).*/\1/p' /proc/cmdline)
-[ -n "$uuid" ] || { echo "cd-loop: no root=PARTUUID= on the kernel command line" >&2; exit 1; }
+[ -n "$uuid" ] || { echo "agentos-cd-loop: no root=PARTUUID= on the kernel command line" >&2; exit 1; }
 modprobe -q loop
+say=$(($(date +%s) + 10))
 until [ -e "/dev/disk/by-partuuid/$uuid" ]; do
+  seen=""
   for d in /dev/sr[0-9]*; do
     [ -b "$d" ] || continue
-    losetup -j "$d" | grep -q . && continue
-    [ "$(blockdev --getsize64 "$d" 2>/dev/null || echo 0)" -gt 0 ] && losetup -f -P -r -b 512 "$d"
+    size=$(blockdev --getsize64 "$d" 2>/dev/null || echo 0)
+    loop=$(losetup -j "$d" | head -n1 | cut -d: -f1)
+    if [ -n "$loop" ]; then
+      # Attached, but the partition scan may have hit an unreadable medium: scan again.
+      ls "$loop"p* >/dev/null 2>&1 || blockdev --rereadpt "$loop" 2>/dev/null || true
+    elif [ "$size" -gt 0 ] && loop=$(losetup -f -P -r -b 512 --show "$d"); then
+      echo "agentos-cd-loop: attached $d as $loop"
+    fi
+    seen="$seen ${d#/dev/} size $size${loop:+ on ${loop#/dev/}}"
   done
+  # One line after 10 s, then about every 60 s, so a stuck console says why.
+  if [ "$(date +%s)" -ge "$say" ]; then
+    echo "agentos-cd-loop: waiting for readable installer media on /dev/sr* (seen:${seen:- none})"
+    say=$(($(date +%s) + 60))
+  fi
   sleep 1
 done

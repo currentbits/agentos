@@ -14,7 +14,8 @@ import os, struct, sys, uuid, zlib
 B = 2048
 ESP = uuid.UUID("c12a7328-f81f-11d2-ba4b-00a0c93ec93b")
 # agentos.cd: gates the initrd's loop unit. The 600 s root-device timeout (default 90 s) is for slow
-# or late virtual media (BMC, Unraid/libvirt); the loop unit keeps polling until then.
+# or late virtual media (BMC, Unraid/libvirt); the loop unit keeps polling until then. Not rd.-prefixed:
+# systemd 257 ignores rd.systemd.default_device_timeout_sec (the cd-late-media boot test then fails at 90 s).
 CDARGS = "ro systemd.volatile=overlay agentos.cd systemd.default_device_timeout_sec=600"
 img = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.environ["OUTPUTDIR"], "agentos-installer.raw")
 

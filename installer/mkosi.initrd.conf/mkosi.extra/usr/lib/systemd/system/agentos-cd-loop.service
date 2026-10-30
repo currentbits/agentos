@@ -11,4 +11,10 @@ Type=oneshot
 RemainAfterExit=yes
 # Waits for the media; the root device timeout (systemd.default_device_timeout_sec) bounds the boot.
 TimeoutStartSec=infinity
+# Its "waiting for readable installer media" lines: kmsg (also in the journal) reaches every console, the
+# screen and the serial one; journal+console would reach only /dev/console (tty0, the last console=).
+# err (3): visible even with quiet (see agentos-install-auto.service).
+StandardOutput=kmsg
+StandardError=kmsg
+SyslogLevel=err
 ExecStart=/usr/lib/agentos/cd-loop
