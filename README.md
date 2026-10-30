@@ -13,7 +13,7 @@ your laptop ── Tailscale ──▶ AgentOS box
                               └─ Solenta: headless on the box, or the box as a worker for your Mac
 ```
 
-**Latest release:** [v1.0.0](https://github.com/currentbits/agentos/releases/latest)
+**Download:** [installer `.iso`](https://dl.currentbits.net/agentos/index.html) (one file: USB stick, virtual CD or VM) · [all formats on the latest release](https://github.com/currentbits/agentos/releases/latest)
 
 ---
 
