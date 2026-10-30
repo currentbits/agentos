@@ -19,7 +19,7 @@ for c in git bash; do ln -s "$(command -v "$c")" "$d/bin/$c"; done
 printf '#!/bin/sh\n' > "$d/bin/node"; chmod +x "$d/bin/node"
 git init -q "$h/work-repo"
 chmod +x "$d/fake/"*
-pair() { HOME=$h PATH="$d/fake:$PATH" TAILSCALE="$d/fake/tailscale" \
+pair() { HOME=$h XDG_CONFIG_HOME=$h/.config PATH="$d/fake:$PATH" TAILSCALE="$d/fake/tailscale" \
          AGENTOS_SSH_DIR="$d/ssh" AGENTOS_WRAPPER="$W" AGENTOS_PREFLIGHT_PATH="$d/bin:$d/real:/usr/bin:/bin" "$P" "$@"; }
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
