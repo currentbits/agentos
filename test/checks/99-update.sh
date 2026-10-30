@@ -36,10 +36,22 @@ check_update_check_lock_not_web_running() {
 }
 
 check_update_dev_build_source_disabled() {
-  # This image comes from a development build (AGENTOS_DEV=1): the check says so, as an error.
-  vm 'grep -qx "Enabled: no" /etc/apt/sources.list.d/agentos.sources && sudo agentos-update --check >/dev/null &&
-      jq -e ".available == null and .error == \"the AgentOS update source is disabled (development build)\"" /var/lib/agentos/update.json >/dev/null &&
-      test -z "$(agentos-update --notice)" && test ! -e /run/issue.d/60-agentos-update.issue'
+  # A development build (AGENTOS_DEV=1) ships the source disabled: the check says so, as an error.
+  # A release build (a v* tag) ships it enabled, pointing at the published repo and signed by the
+  # shipped key; its repo may not exist yet (a first release is built before it is published), so
+  # the check must record a result (an error or a version), never crash.
+  vm 'S=/etc/apt/sources.list.d/agentos.sources
+      if grep -qx "Enabled: no" "$S"; then
+        sudo agentos-update --check >/dev/null &&
+        jq -e ".available == null and .error == \"the AgentOS update source is disabled (development build)\"" /var/lib/agentos/update.json >/dev/null &&
+        test -z "$(agentos-update --notice)" && test ! -e /run/issue.d/60-agentos-update.issue
+      else
+        grep -qE "^URIs: https://[a-z0-9-]+\.github\.io/[A-Za-z0-9._-]+/apt$" "$S" &&
+        grep -qx "Signed-By: /usr/share/keyrings/agentos-archive.gpg" "$S" &&
+        test -s /usr/share/keyrings/agentos-archive.gpg &&
+        { sudo agentos-update --check >/dev/null; true; } &&
+        jq -e "(.checked_at | type) == \"string\" and ((.error | type) == \"string\" or .error == null)" /var/lib/agentos/update.json >/dev/null
+      fi'
 }
 
 # upd_repo KEY DEB...: a signed apt repo of the given packages in $WORK/upd/repo (suite stable,

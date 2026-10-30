@@ -174,7 +174,12 @@ update() {
   # nothing to do (exit 1) or the earlier failure needs the apt step below to actually fix it.
   else step "agentos" sudo bash -c "export DEBIAN_FRONTEND=noninteractive; dpkg --configure -a; apt-get update -qq --error-on=any $APT_AGENTOS && apt-get -y -qq $APT_CONF install --only-upgrade agentos"
   fi
-  step "apt"      sudo bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq && apt-get -y -qq $APT_CONF full-upgrade"
+  # Debian's own updates must not depend on the AgentOS repo being reachable (before its first
+  # release, or while GitHub Pages is down): refresh every source except AgentOS's (the agentos
+  # step above already refreshed that one), keeping its lists (List-Cleanup=0).
+  step "apt"      sudo bash -c "export DEBIAN_FRONTEND=noninteractive; o=\$(mktemp -d); trap 'rm -rf \"\$o\"' EXIT
+    for f in /etc/apt/sources.list.d/*; do [ \"\$f\" = $(printf %q "$SOURCES") ] || ln -s \"\$f\" \"\$o/\"; done
+    apt-get update -qq -o Dir::Etc::sourceparts=\"\$o\" -o APT::Get::List-Cleanup=0 && apt-get -y -qq $APT_CONF full-upgrade"
   step "claude"   claude update
   step "codex"    npm install -g @openai/codex@latest
   step "opencode" opencode upgrade

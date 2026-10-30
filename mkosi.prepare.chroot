@@ -3,6 +3,12 @@
 set -euo pipefail
 [ "${1:-final}" = final ] || exit 0
 
+# Building the image must never depend on AgentOS's own apt repo: on a first release it doesn't
+# exist yet (the release job publishes it after this build). Steps below that run apt (playwright
+# install-deps) see every other source; the agentos source is put back on exit.
+A=/etc/apt/sources.list.d/agentos.sources
+if [ -e "$A" ]; then mv "$A" "$A.building"; trap 'mv "$A.building" "$A"' EXIT; fi
+
 id agent >/dev/null 2>&1 || useradd --create-home --uid 1000 --shell /bin/bash --groups sudo,docker agent
 
 AGENT_PATH=/home/agent/.local/bin:/home/agent/.cargo/bin:/home/agent/.bun/bin:/home/agent/.opencode/bin:/home/agent/.grok/bin:/usr/local/bin:/usr/bin:/bin
