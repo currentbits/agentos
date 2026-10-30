@@ -57,6 +57,9 @@ A box installed from an image without the `agentos` package needs either a reins
 
 ```bash
 curl -fsSLo /tmp/agentos-archive.gpg https://<owner>.github.io/<repo>/apt/agentos-archive.gpg
+# A pre-agentos image may not have gnupg installed, and may not have run `apt-get update` even
+# once yet (its package lists are empty by design): refresh the lists before installing it.
+command -v gpg >/dev/null || { sudo apt-get update && sudo apt-get install -y gnupg; }
 gpg --show-keys /tmp/agentos-archive.gpg      # compare the fingerprint with the one above
 sudo install -m 644 /tmp/agentos-archive.gpg /usr/share/keyrings/agentos-archive.gpg
 printf 'Types: deb\nURIs: https://<owner>.github.io/<repo>/apt\nSuites: stable\nComponents: main\nArchitectures: amd64\nSigned-By: /usr/share/keyrings/agentos-archive.gpg\n' |
