@@ -67,6 +67,11 @@ jobs:
           test/update_check_test.sh
           test/build_deb_version_test.sh
           test/convert_test.sh
+          # dist/mirror.py (the dl.currentbits.net mirror): its pinned dependencies, then moto for a fake S3.
+          python3 -m venv "$RUNNER_TEMP/dist-venv"
+          "$RUNNER_TEMP/dist-venv/bin/pip" install -q --require-hashes -r dist/requirements.txt
+          "$RUNNER_TEMP/dist-venv/bin/pip" install -q pytest 'moto[s3]>=5,<6'
+          "$RUNNER_TEMP/dist-venv/bin/python" -m pytest -q dist
 
       - name: agentos-ci unit tests
         run: |
