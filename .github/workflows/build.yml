@@ -100,8 +100,13 @@ jobs:
           AGENTOS_DEV: ${{ startsWith(github.ref, 'refs/tags/v') && '0' || '1' }}
         run: tools/build-deb.sh
 
+      # mkosi runs as root, like on a Debian build host: unprivileged mkosi 27 needs
+      # systemd-nsresourced (systemd >= 258) for a full user namespace, and Ubuntu 24.04's systemd
+      # is older, so it would map a single UID and the image's agent user could not exist.
       - name: Build image
-        run: mkosi -f build
+        run: |
+          sudo env "PATH=$PATH" mkosi -f build
+          sudo chown -R "$(id -u):$(id -g)" mkosi.output
 
       - name: Smoke test (UEFI + BIOS + UEFI without cloud-init seed)
         env:
@@ -109,7 +114,9 @@ jobs:
         run: test/smoke.sh mkosi.output/agentos.raw uefi bios uefi-noseed
 
       - name: Build installer
-        run: tools/build-installer.sh
+        run: |
+          sudo env "PATH=$PATH" tools/build-installer.sh
+          sudo chown -R "$(id -u):$(id -g)" mkosi.output installer
 
       - name: Installer boot test (USB and El Torito CD)
         run: test/installer-boot-test.sh mkosi.output/agentos-installer.raw
