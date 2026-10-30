@@ -59,7 +59,7 @@ your laptop ── Tailscale ──▶ AgentOS box
 - **Disk:** at least 32 GB (the installer refuses smaller disks). The root filesystem uses about 6.3 GB, and grows to fill the disk on first boot.
 - **RAM:** 4 GB minimum. 8 GB or more is comfortable with desktops: each desktop plus Chromium uses about 300–500 MB, and you can run up to `AGENTOS_MAX_DESKTOPS` of them (default 8).
 - **A Tailscale account.** This is strongly recommended, and it's how you reach the web UI.
-- **Credentials** for the agents you want to use: API keys, or a Claude subscription token.
+- **Credentials** for the agents you want to use: a subscription login (Claude Pro/Max, ChatGPT, xAI) or API keys.
 
 ## Install
 
@@ -179,14 +179,18 @@ The footer shows the installed AgentOS version. Access requires a Tailscale iden
 
 ## Agents
 
-Log in as `agent`. Each CLI is on `PATH` with your keys loaded:
+Log in as `agent` and run `claude`, `codex`, `opencode` or `grok`. Each CLI works with **either a subscription login or an API key**. The box is headless, so every subscription login uses a flow that needs no local browser: open the printed URL on your laptop and paste back the code, or enter it there.
 
-```bash
-claude      # Claude Code   (ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN)
-codex       # Codex         (OPENAI_API_KEY)
-opencode    # opencode
-grok        # Grok          (GROK_CODE_XAI_API_KEY)
-```
+| CLI | Sign in with a subscription | Or use an API key |
+|---|---|---|
+| **Claude Code** | Run `claude` and choose your Claude Pro/Max account (log in once). Or run `claude setup-token` on any machine and store the result as `CLAUDE_CODE_OAUTH_TOKEN`. | `ANTHROPIC_API_KEY` |
+| **Codex** | `codex login --device-auth` (ChatGPT plan). Turn on device-code login in your ChatGPT security settings first. | `OPENAI_API_KEY` |
+| **opencode** | `opencode auth login`, then pick a provider and sign-in method. | Any provider key, via `opencode auth login` |
+| **Grok** | `grok login --device-auth` (your xAI / grok.com account). | `XAI_API_KEY` |
+
+- **Where API keys go:** in the web UI's Settings page, `sudo agentos-config`, or `agentos.env` at install time. AgentOS moves them to `~/.config/agentos/secrets.env` (mode 0600) and exports them to every shell and agent.
+- **Where subscription logins go:** each CLI keeps its own credentials in the `agent` user's home, for example `~/.claude`, `~/.codex/auth.json` and `~/.grok/auth.json`. They survive AgentOS updates, but not a reinstall.
+- **If both are set**, the CLI's own precedence decides. Claude Code, for example, prefers `ANTHROPIC_API_KEY` when it's set, so leave it empty if you want your subscription to be used.
 
 `/usr/local/bin` wrappers load the keys from `~/.config/agentos/secrets.env` even in non-login shells, for example over `ssh box 'claude …'`. Every CLI is preconfigured with:
 - **`agentos-computer`** (MCP): desktops for computer use.
@@ -319,7 +323,7 @@ All settings go in `/etc/agentos/agentos.env`. Set them with `sudo agentos-confi
 | `AGENTOS_CI_MAX_PARALLEL` | `2` | Concurrent CI runs (1–16). |
 | `AGENTOS_SOLENTA` | `1` | Keep a Solenta that Solenta installed running headless (Mode A). |
 | `AGENTOS_AUTO_REBOOT` | `0` | `1` = reboot at 04:00 when a kernel update requires it. |
-| `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `OPENAI_API_KEY`, `GROK_CODE_XAI_API_KEY` | — | Agent credentials, moved to `secrets.env` on apply. |
+| `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `OPENAI_API_KEY`, `XAI_API_KEY` | — | Agent credentials, moved to `secrets.env` on apply. Optional if you sign in with a subscription instead (see [Agents](#agents)). |
 | `AGENTOS_NET_IFACE`, `AGENTOS_NET_ADDRESS`, `AGENTOS_NET_GATEWAY`, `AGENTOS_NET_DNS` | DHCP | Static network, set by the installer. |
 | `AGENTOS_INSTALL_DISK`, `AGENTOS_INSTALL_POWEROFF` | — | Unattended installer only. |
 

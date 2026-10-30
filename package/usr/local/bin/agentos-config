@@ -110,7 +110,7 @@ menu() {
       tailscale) whiptail --msgbox "Use a SINGLE-USE, pre-approved auth key tagged tag:agentos.\n\nTagged: this machine cannot reach your other devices. Single-use: the key may stay readable afterwards (e.g. in cloud user-data), so it must be worthless once used. See docs/tailscale-acl.md." 14 72
                  k=$(whiptail --passwordbox "Tailscale auth key (tskey-auth-...)" 10 72 3>&1 1>&2 2>&3) && [ -n "$k" ] && cmd_set TS_AUTHKEY "$k" || true ;;
       apikeys)   whiptail --msgbox "Use a dedicated, spend-capped key per AgentOS machine: a hijacked agent can read any key stored here." 10 72
-                 for n in ANTHROPIC_API_KEY OPENAI_API_KEY GROK_CODE_XAI_API_KEY CLAUDE_CODE_OAUTH_TOKEN; do
+                 for n in ANTHROPIC_API_KEY OPENAI_API_KEY XAI_API_KEY CLAUDE_CODE_OAUTH_TOKEN; do
                    v=$(whiptail --passwordbox "$n (empty = keep current)" 10 72 3>&1 1>&2 2>&3) || break
                    [ -n "$v" ] && cmd_set "$n" "$v"
                  done ;;

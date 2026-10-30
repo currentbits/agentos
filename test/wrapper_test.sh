@@ -40,4 +40,11 @@ for sh in sh bash; do
   got=$(HOME=$h AGENTOS_LIB=$LIB $sh -c '. "$1"; printf "%s|%s" "$ANTHROPIC_API_KEY" "$PATH"' sh "$R/package/etc/profile.d/agentos.sh")
   [[ $got == "sk-ant-1==|$h/.grok/bin:$h/.local/bin:"* ]] || fail "profile.d ($sh): $got"
 done
+# The 1.0.0 key name still reaches Grok as XAI_API_KEY (an explicit XAI_API_KEY wins).
+h2=$(mktemp -d); mkdir -p "$h2/.config/agentos"
+printf 'GROK_CODE_XAI_API_KEY=old-1\n' > "$h2/.config/agentos/secrets.env"
+[ "$(HOME=$h2 AGENTOS_LIB=$LIB sh -c '. "$1/load-secrets.sh"; printf %s "$XAI_API_KEY"' sh "$LIB")" = old-1 ] || fail "legacy grok key alias"
+printf 'GROK_CODE_XAI_API_KEY=old-1\nXAI_API_KEY=new-2\n' > "$h2/.config/agentos/secrets.env"
+[ "$(HOME=$h2 sh -c '. "$1/load-secrets.sh"; printf %s "$XAI_API_KEY"' sh "$LIB")" = new-2 ] || fail "XAI_API_KEY must win"
+rm -rf "$h2"
 echo "wrapper OK"

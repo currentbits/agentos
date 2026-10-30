@@ -7,7 +7,7 @@ import { runAction } from './actions.js';
 import { HttpError } from './run.js';
 import type { Deps } from './app.js';
 
-export const SECRET_KEYS = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GROK_CODE_XAI_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'];
+export const SECRET_KEYS = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'XAI_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'];
 // TS_AUTHKEY is write-only too, and its state can't be read (agentos.env is root-only and
 // firstboot deletes it once used): the UI shows Tailscale's own status instead.
 export const WRITE_ONLY_KEYS = [...SECRET_KEYS, 'TS_AUTHKEY'];

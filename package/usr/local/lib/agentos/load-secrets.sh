@@ -16,4 +16,6 @@ if [ -z "${AGENTOS_CI_RUN:-}" ] && [ -r "$HOME/.config/agentos/secrets.env" ]; t
     export "$_ag_k=$_ag_v"
   done < "$HOME/.config/agentos/secrets.env"
   unset _ag_l _ag_k _ag_v
+  # AgentOS 1.0.0 named Grok's key GROK_CODE_XAI_API_KEY; Grok only reads XAI_API_KEY.
+  if [ -n "${GROK_CODE_XAI_API_KEY:-}" ] && [ -z "${XAI_API_KEY:-}" ]; then export XAI_API_KEY="$GROK_CODE_XAI_API_KEY"; fi
 fi

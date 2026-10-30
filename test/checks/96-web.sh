@@ -120,12 +120,12 @@ check_web_settings_roundtrip_and_secrets() {
     wm -X PUT -d "{\"values\":{\"AGENTOS_MAX_DESKTOPS\":\"6\"}}" $U/api/settings | grep -q "\"ok\":true" &&
     w $U/api/settings | grep -q "\"AGENTOS_MAX_DESKTOPS\":\"6\"" &&
     wm -X PUT -d "{\"values\":{\"AGENTOS_MAX_DESKTOPS\":\"99\"}}" $U/api/settings | grep -q "\"field\":\"AGENTOS_MAX_DESKTOPS\"" &&
-    wm -X PUT -d "{\"values\":{\"GROK_CODE_XAI_API_KEY\":\"sk-smoke-SECRET-7\"}}" $U/api/settings | grep -q "\"ok\":true" &&
-    grep -qx GROK_CODE_XAI_API_KEY=sk-smoke-SECRET-7 ~/.config/agentos/secrets.env &&
-    s=$(w $U/api/settings) && echo "$s" | grep -q "\"GROK_CODE_XAI_API_KEY\":true" && ! echo "$s" | grep -q sk-smoke &&
+    wm -X PUT -d "{\"values\":{\"XAI_API_KEY\":\"sk-smoke-SECRET-7\"}}" $U/api/settings | grep -q "\"ok\":true" &&
+    grep -qx XAI_API_KEY=sk-smoke-SECRET-7 ~/.config/agentos/secrets.env &&
+    s=$(w $U/api/settings) && echo "$s" | grep -q "\"XAI_API_KEY\":true" && ! echo "$s" | grep -q sk-smoke &&
     ! sudo journalctl -b --no-pager | grep -q sk-smoke-SECRET-7 &&
-    wm -X PUT -d "{\"values\":{\"GROK_CODE_XAI_API_KEY\":\"\"}}" $U/api/settings | grep -q "\"ok\":true" &&
-    w $U/api/settings | grep -q "\"GROK_CODE_XAI_API_KEY\":false"' || rc=1
+    wm -X PUT -d "{\"values\":{\"XAI_API_KEY\":\"\"}}" $U/api/settings | grep -q "\"ok\":true" &&
+    w $U/api/settings | grep -q "\"XAI_API_KEY\":false"' || rc=1
   vm 'sudo agentos-config set AGENTOS_MAX_DESKTOPS 8 && sudo agentos-config apply' || rc=1
   return "$rc"
 }

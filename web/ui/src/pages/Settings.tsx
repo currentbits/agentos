@@ -10,7 +10,7 @@ import { usePoll } from '../usePoll';
 
 const SECRETS: [string, string][] = [
   ['ANTHROPIC_API_KEY', 'Anthropic API key'], ['OPENAI_API_KEY', 'OpenAI API key'],
-  ['GROK_CODE_XAI_API_KEY', 'xAI API key (Grok)'], ['CLAUDE_CODE_OAUTH_TOKEN', 'Claude Code OAuth token'],
+  ['XAI_API_KEY', 'xAI API key (Grok)'], ['CLAUDE_CODE_OAUTH_TOKEN', 'Claude Code OAuth token'],
 ];
 const ACCESS: FieldSpec[] = [
   { key: 'AGENTOS_LAN_SSH', label: 'Allow SSH from the LAN (key-only)', type: 'bool' },

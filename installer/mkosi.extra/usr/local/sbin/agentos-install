@@ -252,7 +252,7 @@ tui() {
   lan=0
   [ -n "$ts" ] || ! W --title "SSH from LAN" --yesno "No Tailscale key. Allow SSH (key-only) from your local network?" 8 70 || lan=1
   cm=$(W --title Console --menu "Local console after install" 12 70 2 headless "Status + login prompt" terminal "Full-screen terminal after login") || return 1
-  for k in ANTHROPIC_API_KEY OPENAI_API_KEY GROK_CODE_XAI_API_KEY CLAUDE_CODE_OAUTH_TOKEN; do
+  for k in ANTHROPIC_API_KEY OPENAI_API_KEY XAI_API_KEY CLAUDE_CODE_OAUTH_TOKEN; do
     v=$(W --title "API keys (optional)" --passwordbox "$k (empty = skip; can be set later with agentos-config)" 10 72) || return 1
     [ -z "$v" ] || apikeys+="$k=$v"$'\n'
   done

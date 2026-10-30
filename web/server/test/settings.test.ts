@@ -27,7 +27,7 @@ describe('settings', () => {
     expect(r.body).not.toContain(SECRET);
     expect(r.body).not.toContain('SUPERSECRET');
     expect(r.json().values.AGENTOS_MAX_DESKTOPS).toBe('4');
-    expect(r.json().secrets).toEqual({ ANTHROPIC_API_KEY: true, OPENAI_API_KEY: false, GROK_CODE_XAI_API_KEY: false, CLAUDE_CODE_OAUTH_TOKEN: false });
+    expect(r.json().secrets).toEqual({ ANTHROPIC_API_KEY: true, OPENAI_API_KEY: false, XAI_API_KEY: false, CLAUDE_CODE_OAUTH_TOKEN: false });
   });
 
   it('PUT sends values on stdin (never argv), applies, audits key names only, and echoes nothing', async () => {
