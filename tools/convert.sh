@@ -62,6 +62,10 @@ done
     echo "(dd, Etcher or Rufus DD mode), or attach the .img as a (virtual) CD (IPMI/BMC virtual media, Hyper-V"
     echo "DVD), and boot it in UEFI mode (Secure Boot works)."
     echo
+    echo "agentos-installer-$VER.iso is the same image, already decompressed, as one direct download"
+    echo "(no parts, nothing to reassemble) at https://dl.currentbits.net/agentos/index.html. That page"
+    echo "has the latest release only; SHA256SUMS lists the .iso's SHA-256 too."
+    echo
   fi
   if (( ${#split_files[@]} > 0 )); then
     echo "These files were split into <1900 MiB parts for GitHub's 2 GiB release-asset limit:"
@@ -84,6 +88,11 @@ done
 } > "$OUT/README-download.txt"
 
 (cd "$OUT" && sha256sum agentos-* MANIFEST.txt README-download.txt > SHA256SUMS)
+# The .iso is the uncompressed installer, served from dl.currentbits.net (dist/mirror.py) and too
+# big to upload here. Its line makes the attested SHA256SUMS cover it; --ignore-missing skips it.
+if [ -n "$INSTALLER" ]; then
+  echo "$(sha256sum < "$INSTALLER" | cut -d' ' -f1)  agentos-installer-$VER.iso" >> "$OUT/SHA256SUMS"
+fi
 
 # Now actually split the oversized files and checksum the parts separately.
 : > "$OUT/SHA256SUMS.parts"
