@@ -77,8 +77,11 @@ check_idle_desktop_reaped() {
   local rc=0
   vm 'sudo agentos-config set AGENTOS_DESKTOP_IDLE_MINUTES 1 && sudo agentos-config apply &&
       systemctl --no-ask-password start agentos-desktop@4.service' && wait_x 4 &&
+  # Backdated past the 1-minute cutoff but not before this boot (the reaper ignores stamps older
+  # than the boot), so wait until the VM has been up long enough for that to exist.
   vm 'test -f /run/agentos/desktops/4.last &&
-      sudo touch -d "@$(( $(date +%s) - 120 ))" /run/agentos/desktops/4.last &&
+      while [ "$(cut -d. -f1 /proc/uptime)" -lt 75 ]; do sleep 1; done &&
+      sudo touch -d "@$(( $(date +%s) - 65 ))" /run/agentos/desktops/4.last &&
       sudo /usr/local/lib/agentos/reap-desktops &&
       ! systemctl is-active --quiet agentos-desktop@4.service' || rc=1
   vm 'sudo agentos-config set AGENTOS_DESKTOP_IDLE_MINUTES 120 && sudo agentos-config apply' || true
