@@ -83,16 +83,27 @@ rm -f "$d/fail-restart"
 echo "$err" | grep -q 'restarting AgentOS services failed' || fail "missing restart-failed warning: $err"
 grep -q '^runuser -u agent -- env -i HOME=/home/agent USER=agent PATH=.* .*/register-mcp --update$' "$L" || fail "register-mcp did not run after a failed restart"
 
-# No "agent" user yet (e.g. first configure, before firstboot creates it): tmpfiles and
-# register-mcp are both skipped, each with a warning, but the configure still succeeds.
+# No "agent" user yet (e.g. first configure, before firstboot creates it): tmpfiles still runs
+# (so entries that don't need "agent" are created), register-mcp is skipped with a warning, and
+# the configure still succeeds.
 reset; printf '%s\n' agentos-web.service agentos-new.timer agentos-new-off.service agentos-new-static.service > "$d/state/units.seen"
 printf '#!/bin/sh\nexit 1\n' > "$d/bin/id"
 if ! err=$(run configure 1.0 2>&1 >/dev/null); then fail "a missing agent user must not fail the configure"; fi
 printf '#!/bin/sh\n[ "$1" = agent ]\n' > "$d/bin/id"
-echo "$err" | grep -q "skipping systemd-tmpfiles --create" || fail "missing tmpfiles-skip warning: $err"
 echo "$err" | grep -q "skipping register-mcp --update" || fail "missing register-mcp-skip warning: $err"
-! grep -q tmpfiles "$L" || fail "tmpfiles ran without an agent user"
+! echo "$err" | grep -q "systemd-tmpfiles" || fail "unexpected tmpfiles warning: $err"
+grep -q tmpfiles "$L" || fail "tmpfiles did not run without an agent user"
 ! grep -q runuser "$L" || fail "register-mcp ran without an agent user"
+
+# If systemd-tmpfiles itself reports errors (e.g. every entry needing "agent" failed), that only
+# warns too -- the configure still succeeds.
+reset; printf '%s\n' agentos-web.service agentos-new.timer agentos-new-off.service agentos-new-static.service > "$d/state/units.seen"
+printf '#!/bin/sh\nexit 1\n' > "$d/bin/id"
+printf '#!/bin/sh\necho "systemd-tmpfiles $*" >> "%s"\nexit 1\n' "$L" > "$d/bin/systemd-tmpfiles"
+if ! err=$(run configure 1.0 2>&1 >/dev/null); then fail "systemd-tmpfiles reporting errors must not fail the configure"; fi
+printf '#!/bin/sh\n[ "$1" = agent ]\n' > "$d/bin/id"
+printf '#!/bin/sh\necho "systemd-tmpfiles $*" >> "%s"\n' "$L" > "$d/bin/systemd-tmpfiles"
+echo "$err" | grep -q "systemd-tmpfiles --create reported errors" || fail "missing tmpfiles-error warning: $err"
 
 # First configure on a box from before the package: units it already had (old place) count as seen.
 reset; touch "$d/old/agentos-web.service"; mkdir -p "$d/old/multi-user.target.wants"

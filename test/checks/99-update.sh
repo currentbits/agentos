@@ -11,6 +11,15 @@ check_agentos_package_installed() {  # sorts before check_agentos_update and che
       test "$(stat -c "%U %a" /var/log/agentos-update.log /run/lock/agentos-update.lock /run/lock/agentos-update-check.lock | sort -u)" = "agent 644"'
 }
 
+check_update_log_ownership_self_heals() {
+  # /var/log/agentos-update.log persists across boots (unlike the /run lock files, recreated fresh
+  # at every boot); if it ever ends up root-owned (e.g. a root cron, or created before "agent"
+  # existed), systemd-tmpfiles must heal it back to agent, not just leave it on first creation.
+  vm 'sudo chown root:root /var/log/agentos-update.log && sudo chmod 600 /var/log/agentos-update.log &&
+      sudo systemd-tmpfiles --create /usr/lib/tmpfiles.d/agentos.conf &&
+      test "$(stat -c "%U:%G %a" /var/log/agentos-update.log)" = "agent:agent 644"'
+}
+
 check_update_check_lock_not_web_running() {
   # The bug this is fixing: the daily check holds its own lock (agentos-update-check.lock), not
   # the one the web UI's "agentos-update is running" probe watches (agentos-update.lock) -- a

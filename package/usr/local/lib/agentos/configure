@@ -60,13 +60,11 @@ if [ ! -d "$RUN/systemd/system" ]; then
 fi
 
 systemctl daemon-reload
-# Tmpfiles entries may reference the "agent" user (e.g. for ownership); on a box where it doesn't
-# exist yet, skip rather than fail the whole configure, same guard register-mcp needs below.
-if id agent >/dev/null 2>&1; then
-  systemd-tmpfiles --create /usr/lib/tmpfiles.d/agentos.conf
-else
-  echo "agentos: warning: user 'agent' not found; skipping systemd-tmpfiles --create" >&2
-fi
+# Some tmpfiles entries reference the "agent" user (e.g. for ownership); on a box where it doesn't
+# exist yet, those individual entries fail but systemd-tmpfiles still creates the rest (e.g.
+# /run/agentos itself, owned by root). Only warn, so that doesn't fail the whole configure.
+systemd-tmpfiles --create /usr/lib/tmpfiles.d/agentos.conf ||
+  echo "agentos: warning: systemd-tmpfiles --create reported errors (entries needing user 'agent' are skipped until it exists)" >&2
 new_units
 migrate
 systemctl try-restart "${SERVICES[@]}" || echo "agentos: warning: restarting AgentOS services failed" >&2
