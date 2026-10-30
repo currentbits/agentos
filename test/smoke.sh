@@ -121,7 +121,8 @@ run_checks() {
   done
   local pattern="^$prefix"
   [[ -n ${SMOKE_DISK:-} && $prefix == check_ ]] && pattern="^(check_|installed_)"
-  for fn in $(declare -F | awk '{print $3}' | grep -E "$pattern" | sort); do
+  # SMOKE_ONLY=<regex> runs just the matching checks (for re-running a failure).
+  for fn in $(declare -F | awk '{print $3}' | grep -E "$pattern" | grep -E "${SMOKE_ONLY:-.}" | sort); do
     if out=$("$fn" 2>&1); then
       if [[ $out == SKIP:* ]]; then echo "SKIP [$MODE] $fn: ${out#SKIP: }"; SKIPS=$((SKIPS + 1))
       else echo "PASS [$MODE] $fn"; fi
