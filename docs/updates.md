@@ -35,12 +35,12 @@ Migrations (one-time steps a release runs on update, from `/usr/local/lib/agento
 ## Security
 
 - The image trusts the AgentOS repository only through its own key, `/usr/share/keyrings/agentos-archive.gpg`, named by `Signed-By:` in `/etc/apt/sources.list.d/agentos.sources`. That key is trusted for this repository and nothing else, and no other key is trusted for it. A missing or wrong signature fails the check and the update.
-- The repository is served over HTTPS from GitHub Pages. The signing key's private half exists only as the GitHub Actions secret `AGENTOS_APT_KEY`, used only by the release job, only for `v*` tags.
+- The repository is served over HTTPS from GitHub Pages. The signing key's private half exists only as the GitHub Actions secret `AGENTOS_APT_KEY` (used only by the release job, only for `v*` tags) and as the owner's offline backup.
 - unattended-upgrades never installs `agentos`: Debian's own default, `/etc/apt/apt.conf.d/50unattended-upgrades`, already allows regular Debian stable point updates as well as security updates; apt.conf.d files add to that same `Origins-Pattern` list rather than replace it, and AgentOS's own `/etc/apt/apt.conf.d/52agentos-unattended` adds only Tailscale and Docker to it. The AgentOS repository's `Origin: AgentOS` matches none of those origins, so apt pins it at `-32768` and unattended-upgrades always falls back to the already-installed version.
 - The key's fingerprint is:
 
   ```
-  (the owner fills this in at step 2 below)
+  6755 0B5C 0BA4 E47D E9F7  7146 232C 46B0 F5A0 43FE
   ```
 
   Check it on a box with `gpg --show-keys /usr/share/keyrings/agentos-archive.gpg`.
