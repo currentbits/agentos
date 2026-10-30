@@ -1,0 +1,20 @@
+#!/bin/sh
+# Booted as a (virtual) CD: Linux exposes no partitions on sr* and the GPT uses 512-byte sectors, so
+# root=PARTUUID= never appears by itself. Attach every CD that has readable media as a read-only,
+# partitioned 512-byte loop device, retrying until the root partition shows up. Polling instead of a
+# udev event: virtual media can be "present" but unreadable when udev probes it (cdrom_id says
+# ID_CDROM_MEDIA=1 while open() fails), and nothing re-triggers a one-shot unit after that.
+# ponytail: 1 s poll, no upper bound here; systemd.default_device_timeout_sec (agentos_cdargs) bounds the boot.
+# (systemd >= 261 has systemd-loop@.service for this; Debian 13 has 257.)
+set -u
+uuid=$(sed -n 's/.*root=PARTUUID=\([^ ]*\).*/\1/p' /proc/cmdline)
+[ -n "$uuid" ] || { echo "cd-loop: no root=PARTUUID= on the kernel command line" >&2; exit 1; }
+modprobe -q loop
+until [ -e "/dev/disk/by-partuuid/$uuid" ]; do
+  for d in /dev/sr[0-9]*; do
+    [ -b "$d" ] || continue
+    losetup -j "$d" | grep -q . && continue
+    [ "$(blockdev --getsize64 "$d" 2>/dev/null || echo 0)" -gt 0 ] && losetup -f -P -r -b 512 "$d"
+  done
+  sleep 1
+done

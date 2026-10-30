@@ -1,0 +1,14 @@
+[Unit]
+# The description is what the console shows while this waits ("A start job is running for ...").
+Description=Waiting for the AgentOS installer CD
+DefaultDependencies=no
+# Only on a CD boot: GRUB adds agentos.cd (installer/mkosi.postoutput); USB boots are unchanged.
+ConditionKernelCommandLine=agentos.cd
+Before=initrd-root-device.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Waits for the media; the root device timeout (systemd.default_device_timeout_sec) bounds the boot.
+TimeoutStartSec=infinity
+ExecStart=/usr/lib/agentos/cd-loop
