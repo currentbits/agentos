@@ -6,8 +6,10 @@
 #   4. restart AgentOS's services (never agentos-solenta, desktops, tmux sessions or CI runs)
 #   5. re-register the MCP servers and the skill for agent (register-mcp --update)
 # A failing migration fails the configure, so dpkg reports it and the next update retries it. A
-# failed restart or a missing "agent" user (steps 1, 4 and 5's agent-dependent parts) only warns:
-# those are not migrations and must not leave the package half-configured.
+# failed restart only warns: that is not a migration and must not leave the package half-configured.
+# Steps 1 and 5's agent-dependent parts only warn while "agent" doesn't exist yet (first configure,
+# before firstboot creates it) -- once it exists, a tmpfiles failure is unexplained and fails the
+# configure like any other inconsistency, same as a failed migration.
 # During the image build (mkosi: a chroot, no running systemd, no agent user yet) the image already
 # is in this release's state: it only records the units as seen and the migrations as done.
 # AGENTOS_LIB, AGENTOS_STATE, AGENTOS_RUN and AGENTOS_OLD_UNITS point the unit tests at scratch dirs.
@@ -60,15 +62,23 @@ if [ ! -d "$RUN/systemd/system" ]; then
 fi
 
 systemctl daemon-reload
+# Checked once: both this step and step 5 below treat a missing "agent" the same way.
+have_agent=0; id agent >/dev/null 2>&1 && have_agent=1
 # Some tmpfiles entries reference the "agent" user (e.g. for ownership); on a box where it doesn't
 # exist yet, those individual entries fail but systemd-tmpfiles still creates the rest (e.g.
-# /run/agentos itself, owned by root). Only warn, so that doesn't fail the whole configure.
-systemd-tmpfiles --create /usr/lib/tmpfiles.d/agentos.conf ||
-  echo "agentos: warning: systemd-tmpfiles --create reported errors (entries needing user 'agent' are skipped until it exists)" >&2
+# /run/agentos itself, owned by root) -- expected, so only warn. Once "agent" exists, every entry
+# should apply cleanly; a failure then is a real problem and must fail the configure, not be
+# swallowed into a warning no one reads.
+if [ "$have_agent" = 1 ]; then
+  systemd-tmpfiles --create /usr/lib/tmpfiles.d/agentos.conf
+else
+  systemd-tmpfiles --create /usr/lib/tmpfiles.d/agentos.conf ||
+    echo "agentos: warning: systemd-tmpfiles --create reported errors (entries needing user 'agent' are skipped until it exists)" >&2
+fi
 new_units
 migrate
 systemctl try-restart "${SERVICES[@]}" || echo "agentos: warning: restarting AgentOS services failed" >&2
-if id agent >/dev/null 2>&1; then
+if [ "$have_agent" = 1 ]; then
   timeout -k 10 120 runuser -u agent -- env -i HOME=/home/agent USER=agent \
     PATH=/home/agent/.local/bin:/home/agent/.cargo/bin:/home/agent/.bun/bin:/home/agent/.opencode/bin:/home/agent/.grok/bin:/usr/local/bin:/usr/bin:/bin \
     "$LIB/register-mcp" --update || echo "agentos: warning: MCP registration or skill install incomplete (agentos-config apply retries it)" >&2

@@ -97,18 +97,29 @@ jq -e '.mcp.mine.command == ["/opt/mine"] and .theme == "dark" and .mcp["agentos
 [ "$(grep -c '^\[mcp\]$' "$h/.grok/config.toml")" = 1 ] || fail "grok [mcp] duplicated"
 [ "$(wc -l < "$d/skill")" = 4 ] || fail "skill install runs every time"
 
-# A comment about the dropped table, separated from the next header by a blank line, must be
-# dropped with the table rather than surviving above an unrelated user header: only a comment
-# sitting directly above the next header (no blank line in between) belongs to the user.
+# AgentOS never writes a comment into one of its own tables, so any comment sitting after a dropped
+# AgentOS table -- a section-heading comment, or a commented-out server block -- is the user's and
+# must survive --update (moved up to sit directly above the next header), even separated from it by
+# a blank line. A second --update must reproduce the exact same file (idempotent).
 cat > "$h/.codex/config.toml" <<'T'
 [mcp_servers.agentos-ci]
 command = "/old/agentos-ci-mcp"
-# old note about agentos-ci, not an introduction to what follows
+# my servers below
+
+[mcp_servers.agentos-computer]
+command = "/old/agentos-computer"
+# [mcp_servers.disabled-thing]
+# command = "/not/in/use"
 
 [unrelated]
 key = 1
 T
 run --update
-grep -qx '# old note about agentos-ci, not an introduction to what follows' "$h/.codex/config.toml" && fail "a trailing comment separated from the next header by a blank line survived"
+grep -qx '# my servers below' "$h/.codex/config.toml" || fail "section-heading comment after a dropped table lost"
+grep -qx '# \[mcp_servers.disabled-thing\]' "$h/.codex/config.toml" || fail "commented-out server block (header line) lost"
+grep -qx '# command = "/not/in/use"' "$h/.codex/config.toml" || fail "commented-out server block (command line) lost"
 grep -qxF '[unrelated]' "$h/.codex/config.toml" || fail "unrelated user table lost"
+cp "$h/.codex/config.toml" "$d/codex.comments-once"
+run --update
+cmp -s "$h/.codex/config.toml" "$d/codex.comments-once" || { diff "$d/codex.comments-once" "$h/.codex/config.toml"; fail "second --update not byte-identical"; }
 echo "register-mcp OK"

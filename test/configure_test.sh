@@ -105,6 +105,13 @@ printf '#!/bin/sh\n[ "$1" = agent ]\n' > "$d/bin/id"
 printf '#!/bin/sh\necho "systemd-tmpfiles $*" >> "%s"\n' "$L" > "$d/bin/systemd-tmpfiles"
 echo "$err" | grep -q "systemd-tmpfiles --create reported errors" || fail "missing tmpfiles-error warning: $err"
 
+# But once "agent" does exist, a systemd-tmpfiles failure is unexplained and must fail the
+# configure, not be swallowed into a warning.
+reset; printf '%s\n' agentos-web.service agentos-new.timer agentos-new-off.service agentos-new-static.service > "$d/state/units.seen"
+printf '#!/bin/sh\necho "systemd-tmpfiles $*" >> "%s"\nexit 1\n' "$L" > "$d/bin/systemd-tmpfiles"
+if run configure 1.0 >/dev/null 2>&1; then fail "a tmpfiles failure with an existing agent user must fail the configure"; fi
+printf '#!/bin/sh\necho "systemd-tmpfiles $*" >> "%s"\n' "$L" > "$d/bin/systemd-tmpfiles"
+
 # First configure on a box from before the package: units it already had (old place) count as seen.
 reset; touch "$d/old/agentos-web.service"; mkdir -p "$d/old/multi-user.target.wants"
 run configure >/dev/null

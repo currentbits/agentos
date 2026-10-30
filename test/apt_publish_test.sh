@@ -73,11 +73,15 @@ cmp -s "$A/dists/stable/InRelease" "$d/before" && [ ! -e "$A/pool/main/a/agentos
 
 # A second secret key in GNUPGHOME (e.g. another release's key, or a leftover test key) must not
 # make apt-publish.sh guess the wrong signer: -u pins it to whichever key the deb's own keyring
-# names, not merely the first secret key gpg happens to list.
+# names, not merely the first secret key gpg happens to list. Make the second key gpg's *default*
+# signer (gpg.conf's default-key), so that if apt-publish.sh ever dropped its "-u $want", gpg would
+# silently sign with the wrong key instead of erroring -- this must make the test fail without -u.
 gpg -q --batch --passphrase '' --quick-gen-key 'AgentOS second <second@invalid>' ed25519 sign never 2>/dev/null
+second_fpr=$(gpg -q --batch --with-colons --list-secret-keys 2>/dev/null | awk -F: '$1=="fpr"{f=$10} $1=="uid" && $10=="AgentOS second <second@invalid>"{print f; exit}')
 gpg -q --batch --export second@invalid > "$d/second.gpg"
+echo "default-key $second_fpr" >> "$GNUPGHOME/gpg.conf"
 mkdeb 1.11.0
 pub 1.11.0
-gpgv -q --keyring "$d/key.gpg" "$A/dists/stable/InRelease" 2>/dev/null || fail "a second secret key in GNUPGHOME changed the signer"
-! gpgv -q --keyring "$d/second.gpg" "$A/dists/stable/InRelease" 2>/dev/null || fail "signed with the wrong (second) key"
+gpgv -q --keyring "$d/key.gpg" "$A/dists/stable/InRelease" 2>/dev/null || fail "a second secret key as gpg's default signer changed the signer"
+! gpgv -q --keyring "$d/second.gpg" "$A/dists/stable/InRelease" 2>/dev/null || fail "signed with the wrong (default-key) second key"
 echo "apt-publish OK"

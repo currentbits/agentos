@@ -11,14 +11,23 @@
 #     apt-get update -qq && apt-get install -y -qq --no-install-recommends python3 python3-venv >/dev/null
 #     python3 -m venv /tmp/genv && /tmp/genv/bin/pip install -q --upgrade pip
 #     mkdir -p /tmp/wheels
-#     /tmp/genv/bin/pip download -d /tmp/wheels "mcp>=1.28,<2" "pillow>=10" "pyyaml>=6,<7"
+#     # --only-binary=:all: refuses a sdist outright instead of silently mis-parsing one below (a
+#     # sdist is named <name>-<version>.tar.gz, with no 4th "-"-separated field to split the
+#     # version from the ".tar.gz" extension the way a wheel's pyver/abi/platform fields let the
+#     # loop below do it for <name>-<version>-<pyver>-<abi>-<platform>.whl). Every direct and
+#     # transitive dependency here is required to ship a cp313 (or py3/none-any) wheel; if one ever
+#     # doesn't, this fails loudly here instead of writing a corrupt version into requirements.txt.
+#     /tmp/genv/bin/pip download --only-binary=:all: -d /tmp/wheels "mcp>=1.28,<2" "pillow>=10" "pyyaml>=6,<7"
 #     cd /tmp/wheels
-#     for f in *; do
+#     for f in *.whl; do
 #       rest=${f#*-}; name=${f%%-*}; version=${rest%%-*}
 #       echo "$(echo "$name" | tr _ -)==$version --hash=sha256:$(sha256sum "$f" | cut -d" " -f1)"
 #     done | sort
 #   '
-# Paste the output back in below, keeping the three direct-dependency comments on their lines.
+# Paste the output back in below. The loop above has no idea which packages are the three direct
+# ones, so it never emits their "# direct: ..." comments -- re-add those three comments by hand,
+# on mcp/pillow/pyyaml's lines, same as today, or a later regeneration silently loses the record
+# of why those three (and only those three) are pinned here directly.
 
 annotated-types==0.8.0 --hash=sha256:f072f4d804ea359e4eaf198b1af7a8b0943881a87f31bb764f8bf219bb9419e0
 anyio==4.15.1 --hash=sha256:6152fdbbf9a77fdec97731721bebf7c4c44f7c29b424b0065826173efc7ed101

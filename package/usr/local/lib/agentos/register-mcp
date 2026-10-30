@@ -29,14 +29,15 @@ append_atomically() {
 
 # drop_toml_table <file> <name>: rewrite the file without the [mcp_servers.<name>] table (and its
 # sub-tables), and without the blank lines just before it, so the re-appended table doesn't grow
-# the file. A comment line sitting right after the dropped table is dropped with it, unless it sits
-# *directly* above the next header (no blank line in between) -- that one reads as introducing the
-# user's own next table, so it belongs to the user and survives. A comment with a blank line (or
-# nothing: end of file) after it reads as a trailing note about the table just dropped, so it goes
-# with it. Likewise a comment sitting right *before* the dropped table (e.g. a trailing comment at
+# the file. AgentOS itself never writes a comment into one of its own tables, so any comment line
+# sitting right after the dropped table -- a section heading, a commented-out server block, etc. --
+# is necessarily the user's, never ours to discard: it is buffered along with any blank lines and
+# flushed in front of whatever header follows, so it survives (moved up to sit directly above that
+# header). Likewise a comment sitting right *before* the dropped table (e.g. a trailing comment at
 # the end of the user's own previous table) is flushed before we start skipping, up to and including
-# that last comment line, dropping only the blank lines after it. Everything else is kept byte for
-# byte.
+# that last comment line, dropping only the blank lines after it. A comment with nothing after it
+# (end of file, no next header to move it above) is dropped with the table, same as a blank line --
+# there's nothing left for it to introduce. Everything else is kept byte for byte.
 # The header match tolerates trailing whitespace and a trailing "# comment" after the closing "]";
 # a quoted key (e.g. [mcp_servers."agentos-ci"]) is out of scope and won't be recognized.
 drop_toml_table() {
@@ -51,10 +52,7 @@ drop_toml_table() {
       if (!skip) printf "%s", keep   # not already skipping: flush comments up to here, drop the rest
       skip = 1; keep = ""; trail = ""; next
     }
-    # Reaching the next header ends the drop. A comment buffered since the dropped header is kept
-    # only if it sits directly above this one (trail == "": no blank line in between) -- otherwise
-    # it was a trailing note about the table just dropped, not an introduction to this one.
-    /^\[/ { if (skip && trail != "") keep = ""; skip = 0 }
+    /^\[/ { skip = 0 }
     !skip { printf "%s%s%s\n", keep, trail, $0 }
     { keep = ""; trail = "" }
     END { if (!skip) printf "%s%s", keep, trail }' "$f" > "$tmp" && cp --attributes-only -p "$f" "$tmp" && mv "$tmp" "$f" || { rm -f "$tmp"; return 1; }

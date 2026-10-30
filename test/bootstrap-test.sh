@@ -3,10 +3,13 @@
 # real VM: boot an image built before the agentos package existed (commit f2c51ea, the parent of
 # the first package commit), point it at a locally served, test-key-signed apt repo containing the
 # current agentos .deb through the same override test/checks/99-update.sh's check_update_end_to_end
-# uses (a local sources.list.d entry naming a test keyring), run the documented steps verbatim with
-# only the URL and key swapped for the test repo's, and verify what the docs promise: the package
-# installed, migration 001 moved the old unit copies aside, the services and web UI are up, the
-# MCP/skill registrations ran, and a --check against the test repo works.
+# uses -- a separate test keyring at /etc/apt/keyrings/agentos-smoke.gpg plus a Signed-By override,
+# never the package's own /usr/share/keyrings/agentos-archive.gpg, so this test still works once a
+# real archive key ships inside the package -- run the documented steps verbatim with only the URL
+# and key swapped for the test repo's, and verify what the docs promise: the package installed, a
+# .dpkg-dist left next to the conffile this test pre-edited, migration 001 moved the old unit copies
+# aside, the services and web UI are up, stale MCP/skill registrations were actually overwritten
+# (not just created fresh), and a --check against the test repo works.
 # Not part of the default smoke suite (test/smoke.sh): it needs a separate pre-package image. Build
 # one (once; the raw image is large and not worth rebuilding per run) in its own git worktree, e.g.:
 #   git worktree add --detach /tmp/agentos-f2c51ea f2c51ea
@@ -85,19 +88,33 @@ expect repo_served vm '
   sudo systemd-run --unit=boot-repo -p User=agent python3 -m http.server 8099 --bind 127.0.0.1 --directory /home/agent/boot-repo &&
   for _ in $(seq 1 20); do curl -fsS -o /dev/null http://127.0.0.1:8099/dists/stable/InRelease && exit 0; sleep 0.5; done; exit 1'
 
-# docs/updates.md, "Boxes installed before updates existed", verbatim except the URL and key: the
-# real bootstrap points at https://<owner>.github.io/<repo>/apt and the real archive key.
+# Make the MCP/skill registrations stale before installing, so mcp_and_skill_registered below
+# proves register-mcp --update actually overwrote them, not merely created them fresh on a box
+# that never had them: a wrong tool_timeout_sec, and a missing skill file.
+expect stale_registrations_seeded vm '
+  mkdir -p ~/.codex &&
+  printf "[mcp_servers.agentos-ci]\ncommand = \"/usr/local/bin/agentos-ci-mcp\"\ntool_timeout_sec = 1800\n" > ~/.codex/config.toml &&
+  mkdir -p ~/.claude/skills/agentos-ci && rm -f ~/.claude/skills/agentos-ci/SKILL.md'
+
+# docs/updates.md, "Boxes installed before updates existed", verbatim except the URL and key (a
+# separate test keyring path, /etc/apt/keyrings/agentos-smoke.gpg, with a Signed-By override --
+# never the package's own /usr/share/keyrings/agentos-archive.gpg, so this still works once a real
+# archive key ships inside the package itself): the real bootstrap points at
+# https://<owner>.github.io/<repo>/apt and the real archive key at its real path.
 expect bootstrap_steps vm '
   curl -fsSLo /tmp/agentos-archive.gpg http://127.0.0.1:8099/agentos-archive.gpg &&
   { command -v gpg >/dev/null || { sudo apt-get update >/dev/null && sudo apt-get install -y gnupg >/dev/null; }; } &&
   gpg --show-keys /tmp/agentos-archive.gpg >/dev/null &&
-  sudo install -m 644 /tmp/agentos-archive.gpg /usr/share/keyrings/agentos-archive.gpg &&
-  printf "Types: deb\nURIs: http://127.0.0.1:8099\nSuites: stable\nComponents: main\nArchitectures: amd64\nSigned-By: /usr/share/keyrings/agentos-archive.gpg\n" |
+  sudo install -D -m 644 /tmp/agentos-archive.gpg /etc/apt/keyrings/agentos-smoke.gpg &&
+  printf "Types: deb\nURIs: http://127.0.0.1:8099\nSuites: stable\nComponents: main\nArchitectures: amd64\nSigned-By: /etc/apt/keyrings/agentos-smoke.gpg\n" |
     sudo tee /etc/apt/sources.list.d/agentos.sources >/dev/null &&
   sudo apt-get update &&
   sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold agentos'
 
 expect dpkg_installed vm 'dpkg -s agentos | grep -qx "Status: install ok installed"'
+# docs/updates.md: "yours is kept" -- the sources.list.d conffile was pre-edited (above) before the
+# package ever owned it, so dpkg keeps that edit and leaves the package's own version next to it.
+expect dpkg_dist_left vm 'test -e /etc/apt/sources.list.d/agentos.sources.dpkg-dist'
 # Clean apart from the one conffile this test deliberately pre-edited before installing (the
 # sources.list.d override above) -- docs/updates.md: "yours is kept".
 expect dpkg_verify_clean vm '
