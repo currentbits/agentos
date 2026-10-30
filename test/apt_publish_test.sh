@@ -47,9 +47,11 @@ for v in 1.2.0 1.10.0; do mkdeb $v; pub $v; done
 [ "$(ls "$A/pool/main/a/agentos" | sort -V | tr '\n' ' ')" = 'agentos_1.1.0_amd64.deb agentos_1.2.0_amd64.deb agentos_1.10.0_amd64.deb ' ] || fail "prune: $(ls "$A/pool/main/a/agentos")"
 [ ! -e "$A/notes/1.0.0.md" ] && [ "$(jq -r .version "$A/latest.json")" = 1.10.0 ] || fail "prune notes / latest"
 
-# Republishing an existing version: identical content is a no-op; different content refuses.
+# Republishing an existing version: identical content is a no-op (and says so); different content
+# refuses.
 cp "$A/dists/stable/InRelease" "$d/before"
-pub 1.10.0
+out=$(AGENTOS_APT_KEEP=3 "$R/tools/apt-publish.sh" "$d/agentos_1.10.0_amd64.deb" "$d/notes.md" "$d/site")
+grep -qF "apt-publish: 1.10.0 is already published, unchanged" <<< "$out" || fail "missing already-published message: $out"
 cmp -s "$A/dists/stable/InRelease" "$d/before" || fail "identical republish changed the repo"
 mkdeb 1.10.0 "$d/key.gpg" $'# retry\n'
 pub 1.10.0 2>/dev/null && fail "republished 1.10.0 with different content"
@@ -68,4 +70,14 @@ AGENTOS_APT_KEEP=0 "$R/tools/apt-publish.sh" "$d/agentos_2.0.5_amd64.deb" "$d/no
 AGENTOS_APT_KEEP=abc "$R/tools/apt-publish.sh" "$d/agentos_2.0.5_amd64.deb" "$d/notes.md" "$d/site" 2>/dev/null && fail "published with a non-numeric AGENTOS_APT_KEEP"
 mkdeb 1.0.5; pub 1.0.5 2>/dev/null && fail "published a backport that would be pruned immediately"
 cmp -s "$A/dists/stable/InRelease" "$d/before" && [ ! -e "$A/pool/main/a/agentos/agentos_2.0.0_amd64.deb" ] || fail "a refusal changed the repo"
+
+# A second secret key in GNUPGHOME (e.g. another release's key, or a leftover test key) must not
+# make apt-publish.sh guess the wrong signer: -u pins it to whichever key the deb's own keyring
+# names, not merely the first secret key gpg happens to list.
+gpg -q --batch --passphrase '' --quick-gen-key 'AgentOS second <second@invalid>' ed25519 sign never 2>/dev/null
+gpg -q --batch --export second@invalid > "$d/second.gpg"
+mkdeb 1.11.0
+pub 1.11.0
+gpgv -q --keyring "$d/key.gpg" "$A/dists/stable/InRelease" 2>/dev/null || fail "a second secret key in GNUPGHOME changed the signer"
+! gpgv -q --keyring "$d/second.gpg" "$A/dists/stable/InRelease" 2>/dev/null || fail "signed with the wrong (second) key"
 echo "apt-publish OK"

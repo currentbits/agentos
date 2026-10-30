@@ -27,9 +27,11 @@ s=$x/etc/apt/sources.list.d/agentos.sources
 grep -qiE '^Enabled:[[:space:]]*no' "$s" && die "$V is a development build (its AgentOS source is disabled)"
 grep -q 'OWNER\.github\.io/REPO' "$s" && die "$V still has the placeholder repo URL"
 fpr() { gpg --batch --with-colons "$@" 2>/dev/null | awk -F: '$1 == "fpr" {print $10; exit}'; }
-want=$(fpr --list-secret-keys)
-[ -n "$want" ] || die "no signing key in GNUPGHOME"
-[ "$(fpr --show-keys "$x/usr/share/keyrings/agentos-archive.gpg")" = "$want" ] || die "$V ships a keyring that is not the signing key ($want)"
+# Pin the signer to the key the deb's own keyring names, not merely "whichever secret key
+# --list-secret-keys happens to list first" -- GNUPGHOME may hold more than one secret key.
+want=$(fpr --show-keys "$x/usr/share/keyrings/agentos-archive.gpg")
+[ -n "$want" ] || die "could not read $V's keyring"
+[ -n "$(fpr --list-secret-keys "$want")" ] || die "$V ships a keyring that is not the signing key (no secret key for $want in GNUPGHOME)"
 
 # Republishing the same version: identical content is a no-op, different content refuses (it
 # would silently replace what boxes already fetched).
@@ -49,11 +51,7 @@ for f in "$P"/agentos_*_amd64.deb; do
   [ -e "$f" ] || continue
   b=$(basename "$f"); b=${b#agentos_}; old_versions+=("${b%_amd64.deb}")
 done
-if [ "${#old_versions[@]}" -gt 0 ]; then
-  printf '%s\n' "${old_versions[@]}" "$V"
-else
-  printf '%s\n' "$V"
-fi | sort -V | tail -n "$KEEP" | grep -qx "$V" \
+printf '%s\n' "${old_versions[@]+"${old_versions[@]}"}" "$V" | sort -V | tail -n "$KEEP" | grep -qxF "$V" \
   || die "$V is older than the newest $KEEP published versions and would be pruned immediately"
 
 mkdir -p "$P" "$A/notes" "$A/dists/stable/main/binary-amd64"
