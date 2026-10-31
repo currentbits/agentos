@@ -1,0 +1,29 @@
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA512
+
+Architectures: amd64
+Codename: stable
+Components: main
+Date: Sat, 31 Oct 2026 21:12:08 +0000
+Label: AgentOS
+Origin: AgentOS
+Suite: stable
+MD5Sum:
+ 11c2db0400d620ee347b3c8e13ed316c             7082 main/binary-amd64/Packages
+ 52f352c16c494bf6db24885474d57e03             1692 main/binary-amd64/Packages.gz
+SHA1:
+ e14b3a724e67c6fb9b7e0271e819faf29592efb3             7082 main/binary-amd64/Packages
+ e20e8de6400020e26d756997920fcb943c301c90             1692 main/binary-amd64/Packages.gz
+SHA256:
+ 75fd2f948e282a81773cd56c16157319e3409bc7fe05ff52a4886ca95c8a3ddf             7082 main/binary-amd64/Packages
+ f65a1ded531e9a5ff986d99c8406053264536de999b8df1b75a32914f1d8dc99             1692 main/binary-amd64/Packages.gz
+SHA512:
+ 49281c401e20aa1f63f0946e6b1f74ad9793b66eb795700a848876fb8325e6664fc5ddac772230018a33fe067850c9762087e67b76df9a639d198b0b7c9770ba             7082 main/binary-amd64/Packages
+ a40204688d9bb74ba4ef2e9ec0832096f333d294604fb993a29721dcd90a7219d9d992c4c6b8198e7c99a991b9d79bc63a1b8a17d0de9b08c173bcbc963413df             1692 main/binary-amd64/Packages.gz
+-----BEGIN PGP SIGNATURE-----
+
+iHUEARYKAB0WIQRnVQtcC6Tkfen3cUYjLEaw9aBD/gUCauZZqAAKCRAjLEaw9aBD
+/qodAP9ZpzCn0gm/nMZ70ZqVWPVnKFwm08ENJFFpPK+BshU5ZgD/Rt4AEMmE4I6m
+ux1BPGHK0PI9Nvvn6H0twy+ecROeTww=
+=Sy8D
+-----END PGP SIGNATURE-----

@@ -1,0 +1,95 @@
+Package: agentos
+Architecture: amd64
+Version: 1.0.0
+Priority: optional
+Section: admin
+Maintainer: AgentOS <root@localhost>
+Installed-Size: 128376
+Depends: python3.13, nodejs (>= 24~), nodejs (<< 25~), tigervnc-standalone-server, xfce4-session, xfwm4, xfce4-panel, xfdesktop4, xfce4-settings, xfce4-terminal, xfconf, dbus-x11, adwaita-icon-theme, xdotool, scrot, xclip, chromium, fonts-dejavu, fonts-noto-color-emoji, novnc, websockify, polkitd, libnss3, libnspr4, libgtk-3-0t64, libgbm1, libasound2t64, libatk1.0-0t64, libatk-bridge2.0-0t64, libatspi2.0-0t64, libcups2t64, libdrm2, libxkbcommon0, libxcomposite1, libxdamage1, libxrandr2, libxfixes3, libpango-1.0-0, libcairo2, libdbus-1-3, libexpat1, libxext6, libx11-6, libxcb1, libglib2.0-0t64
+Filename: pool/main/a/agentos/agentos_1.0.0_amd64.deb
+Size: 26197172
+MD5sum: 39794c31299309482047b1e0c4462f16
+SHA1: 45dd160eb05dbec49752e9e8d861b1865304df4b
+SHA256: 5210c979b27ca070e69375a7594a277ce2ea122423e1d042268f104b984dc94a
+SHA512: 39b09993d95a255cc6927ee44d059219c3d575cca8560179c3952d86f69d585a0107b31dd6842172cd745b246c8dbfa626897dec6fb40a35eab93617af5d8415
+Description: AgentOS: the box's own scripts, units, web UI, CI and MCP servers
+ Everything AgentOS installs itself, outside Debian packages and the agent's
+ home: /usr/local/{bin,sbin,lib/agentos,share/agentos}, the systemd units and
+ preset, and AgentOS's files in /etc. Updated with agentos-update.
+
+Package: agentos
+Architecture: amd64
+Version: 1.0.1
+Priority: optional
+Section: admin
+Maintainer: AgentOS <root@localhost>
+Installed-Size: 128380
+Depends: python3.13, nodejs (>= 24~), nodejs (<< 25~), tigervnc-standalone-server, xfce4-session, xfwm4, xfce4-panel, xfdesktop4, xfce4-settings, xfce4-terminal, xfconf, dbus-x11, adwaita-icon-theme, xdotool, scrot, xclip, chromium, fonts-dejavu, fonts-noto-color-emoji, novnc, websockify, polkitd, libnss3, libnspr4, libgtk-3-0t64, libgbm1, libasound2t64, libatk1.0-0t64, libatk-bridge2.0-0t64, libatspi2.0-0t64, libcups2t64, libdrm2, libxkbcommon0, libxcomposite1, libxdamage1, libxrandr2, libxfixes3, libpango-1.0-0, libcairo2, libdbus-1-3, libexpat1, libxext6, libx11-6, libxcb1, libglib2.0-0t64
+Filename: pool/main/a/agentos/agentos_1.0.1_amd64.deb
+Size: 26193592
+MD5sum: eca9371ce047dbecd82483ae529dd096
+SHA1: 414c9f1dae22c03ef7c6fe578e2e4daaea3b1136
+SHA256: ce78975c31e9063b5f1f6efb2850f5c7e66fd833bdba36a005a6c9fec0837e68
+SHA512: a4d1a4afdbb0a994725c22e927807d6a763c602abf158203aa7200ee07b2fce31da5dc81cddb7f6d1696f47696e8354e4d1e0525b0cb9501ffaab458cb15b6ae
+Description: AgentOS: the box's own scripts, units, web UI, CI and MCP servers
+ Everything AgentOS installs itself, outside Debian packages and the agent's
+ home: /usr/local/{bin,sbin,lib/agentos,share/agentos}, the systemd units and
+ preset, and AgentOS's files in /etc. Updated with agentos-update.
+
+Package: agentos
+Architecture: amd64
+Version: 1.0.2
+Priority: optional
+Section: admin
+Maintainer: AgentOS <root@localhost>
+Installed-Size: 128380
+Depends: python3.13, nodejs (>= 24~), nodejs (<< 25~), tigervnc-standalone-server, xfce4-session, xfwm4, xfce4-panel, xfdesktop4, xfce4-settings, xfce4-terminal, xfconf, dbus-x11, adwaita-icon-theme, xdotool, scrot, xclip, chromium, fonts-dejavu, fonts-noto-color-emoji, novnc, websockify, polkitd, libnss3, libnspr4, libgtk-3-0t64, libgbm1, libasound2t64, libatk1.0-0t64, libatk-bridge2.0-0t64, libatspi2.0-0t64, libcups2t64, libdrm2, libxkbcommon0, libxcomposite1, libxdamage1, libxrandr2, libxfixes3, libpango-1.0-0, libcairo2, libdbus-1-3, libexpat1, libxext6, libx11-6, libxcb1, libglib2.0-0t64
+Filename: pool/main/a/agentos/agentos_1.0.2_amd64.deb
+Size: 26194212
+MD5sum: 487e6c431aa9fb2e8830af913056e78d
+SHA1: f8cabc74c2702c947129ed12aba813de41b4a2e0
+SHA256: 29bdf2bbe03ca0988932641b6101e338299cc65cdc0afc94439bd6a78994f35e
+SHA512: 0fa133491434ab2c15483098578002e29414162af29654d27bae445be7e92604b1190efcf70ceb75978f8e64e6995c8cf37cae30952a02ff41bef230f2e22185
+Description: AgentOS: the box's own scripts, units, web UI, CI and MCP servers
+ Everything AgentOS installs itself, outside Debian packages and the agent's
+ home: /usr/local/{bin,sbin,lib/agentos,share/agentos}, the systemd units and
+ preset, and AgentOS's files in /etc. Updated with agentos-update.
+
+Package: agentos
+Architecture: amd64
+Version: 1.0.3
+Priority: optional
+Section: admin
+Maintainer: AgentOS <root@localhost>
+Installed-Size: 128408
+Depends: python3.13, nodejs (>= 24~), nodejs (<< 25~), tigervnc-standalone-server, xfce4-session, xfwm4, xfce4-panel, xfdesktop4, xfce4-settings, xfce4-terminal, xfconf, dbus-x11, adwaita-icon-theme, xdotool, scrot, xclip, chromium, fonts-dejavu, fonts-noto-color-emoji, novnc, websockify, polkitd, libnss3, libnspr4, libgtk-3-0t64, libgbm1, libasound2t64, libatk1.0-0t64, libatk-bridge2.0-0t64, libatspi2.0-0t64, libcups2t64, libdrm2, libxkbcommon0, libxcomposite1, libxdamage1, libxrandr2, libxfixes3, libpango-1.0-0, libcairo2, libdbus-1-3, libexpat1, libxext6, libx11-6, libxcb1, libglib2.0-0t64
+Filename: pool/main/a/agentos/agentos_1.0.3_amd64.deb
+Size: 26204916
+MD5sum: 00915a201df46be3a1bd60ead7bd52dd
+SHA1: fcbb1e7322beb706f6a6c560bf6c79d6de917385
+SHA256: 27b8263d71f2621bd49fb73fc804f7f294b69f4f9673ea984f2f99499586c35a
+SHA512: 62c2f13f68e0d332be70b0b7c3b39a642f3fa70814189ae231d21e9baa8d3505bddf458c89d1af644c699bd0b8a9bc60cca52e9e89b3129eaebe35d2910dafb2
+Description: AgentOS: the box's own scripts, units, web UI, CI and MCP servers
+ Everything AgentOS installs itself, outside Debian packages and the agent's
+ home: /usr/local/{bin,sbin,lib/agentos,share/agentos}, the systemd units and
+ preset, and AgentOS's files in /etc. Updated with agentos-update.
+
+Package: agentos
+Architecture: amd64
+Version: 1.0.4
+Priority: optional
+Section: admin
+Maintainer: AgentOS <root@localhost>
+Installed-Size: 128408
+Depends: login, python3.13, nodejs (>= 24~), nodejs (<< 25~), tigervnc-standalone-server, xfce4-session, xfwm4, xfce4-panel, xfdesktop4, xfce4-settings, xfce4-terminal, xfconf, dbus-x11, adwaita-icon-theme, xdotool, scrot, xclip, chromium, fonts-dejavu, fonts-noto-color-emoji, novnc, websockify, polkitd, libnss3, libnspr4, libgtk-3-0t64, libgbm1, libasound2t64, libatk1.0-0t64, libatk-bridge2.0-0t64, libatspi2.0-0t64, libcups2t64, libdrm2, libxkbcommon0, libxcomposite1, libxdamage1, libxrandr2, libxfixes3, libpango-1.0-0, libcairo2, libdbus-1-3, libexpat1, libxext6, libx11-6, libxcb1, libglib2.0-0t64
+Filename: pool/main/a/agentos/agentos_1.0.4_amd64.deb
+Size: 26203332
+MD5sum: a4f25a053829a18ae53d7509750e4588
+SHA1: e6fca93527567a612a3549af7bcee3d86b67f0d8
+SHA256: e8ddbe6e1b5e653609073e65aa3801dc3bcfaf72c46ba6e188a4aeea6d427e82
+SHA512: 4ebd9edf23f17326b9fac40a174d4753a6132a10803fa58052c97e09716c5e427e2c88da4fee14f26a0fadf863e148cf818bee85a7821d9a5a661d4fc20372cb
+Description: AgentOS: the box's own scripts, units, web UI, CI and MCP servers
+ Everything AgentOS installs itself, outside Debian packages and the agent's
+ home: /usr/local/{bin,sbin,lib/agentos,share/agentos}, the systemd units and
+ preset, and AgentOS's files in /etc. Updated with agentos-update.
+
