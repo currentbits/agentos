@@ -167,11 +167,11 @@ check_web_lan_firewall_order() {
   # Finding 2: 7443 is reachable only as redirected from 443 (ct status dnat); that guard and the
   # explicit drop beneath it must come before the tailscale0 and lo accepts, or either would let a
   # direct (non-redirected) connection to 7443 through, including from a tailnet peer.
-  vm 'r=$(sudo nft -a list chain inet agentos input) &&
+  vm 'r=$(sudo nft list chain inet agentos input) &&
       dnat=$(grep -n "tcp dport 7443 ct status dnat accept" <<< "$r" | cut -d: -f1) &&
       drop=$(grep -n "tcp dport 7443 drop" <<< "$r" | cut -d: -f1) &&
       ts=$(grep -n "iifname \"tailscale0\" accept" <<< "$r" | cut -d: -f1) &&
-      lo=$(grep -n "iif lo accept" <<< "$r" | cut -d: -f1) &&
+      lo=$(grep -n "iif \"lo\" accept" <<< "$r" | cut -d: -f1) &&
       [ -n "$dnat" ] && [ -n "$drop" ] && [ -n "$ts" ] && [ -n "$lo" ] &&
       [ "$dnat" -lt "$ts" ] && [ "$dnat" -lt "$lo" ] && [ "$drop" -lt "$ts" ] && [ "$drop" -lt "$lo" ]'
 }
@@ -204,11 +204,13 @@ check_web_lan_login_end_to_end() {
     [ "$(lan_post -d '{"password":"wrong5"}' "https://$GIP/api/lan/login")" = 401 ] &&
     [ "$(lan_post -d "{\"password\":\"$LANPW\"}" "https://$GIP/api/lan/login")" = 429 ] &&
     # Finding 2: 7443 directly, not through 443, is refused (the redirect's ct-status-dnat guard).
-    [ "$(curl -sk -m 8 -o /dev/null -w '%{http_code}' "https://127.0.0.1:$HOSTPORT_7443/" 2>/dev/null || echo 000)" = 000 ] &&
+    # curl's own %{http_code} is already "000" on a failed connection; no fallback needed (or wanted:
+    # it would double up, right after curl's own unterminated "000", into "000000").
+    [ "$(curl -sk -m 8 -o /dev/null -w '%{http_code}' "https://127.0.0.1:$HOSTPORT_7443/")" = 000 ] &&
     # Finding 1: a container's outbound HTTPS reaches the real internet, not this box's own LAN
     # listener (the redirect must not catch forwarded traffic, only traffic addressed to this box).
     vm 'docker rm -f ag-lan-curl >/dev/null 2>&1 || true
-        docker run --rm --name ag-lan-curl curlimages/curl -sSI -m 15 https://example.com | head -1 | grep -q "^HTTP/"' || rc=1
+        docker run --rm --name ag-lan-curl curlimages/curl -sSI -m 15 https://example.com | head -1 | grep -q "^HTTP/"' &&
     # A restart forgets the failures (and every session), as documented.
     vm 'sudo systemctl restart agentos-web.service' && lan_up || rc=1
     hdr=$(lan -D - -o /dev/null -X POST -H "Origin: https://$GIP" -H 'X-AgentOS: 1' -H 'Content-Type: application/json' \
