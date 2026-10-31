@@ -8,7 +8,11 @@ set -euo pipefail
 . "${AGENTOS_LIB:-/usr/local/lib/agentos}/env.sh"
 D=${WEB_LAN_DIR:-/etc/agentos/web-lan}
 G=${WEB_LAN_GROUP:-agent}     # agentos-web's group: it reads the key
-if [ ! -s "$D/key.pem" ] || ! openssl x509 -in "$D/cert.pem" -noout -checkend $((30 * 86400)) >/dev/null 2>&1; then
+# Regenerate when missing, near expiry, or (an interrupted previous run) the key and cert don't
+# actually match: the two files are swapped into place with two renames, not one, so a reader could
+# otherwise briefly see one half of an old pair and one half of a new one.
+if [ ! -s "$D/key.pem" ] || ! openssl x509 -in "$D/cert.pem" -noout -checkend $((30 * 86400)) >/dev/null 2>&1 ||
+   [ "$(openssl pkey -in "$D/key.pem" -pubout 2>/dev/null)" != "$(openssl x509 -in "$D/cert.pem" -noout -pubkey 2>/dev/null)" ]; then
   h=$(hostname)
   san="DNS:$h,DNS:$h.local"
   for ip in $(lan_ipv4s); do

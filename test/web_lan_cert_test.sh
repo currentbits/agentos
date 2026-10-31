@@ -33,4 +33,10 @@ openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 
   -keyout "$WEB_LAN_DIR/key.pem" -out "$WEB_LAN_DIR/cert.pem" 2>/dev/null
 old=$(openssl x509 -in "$WEB_LAN_DIR/cert.pem" -noout -fingerprint -sha256 | sed 's/^[^=]*=//')
 fp3=$("$S"); [ "$fp3" != "$old" ]; openssl x509 -in "$WEB_LAN_DIR/cert.pem" -noout -checkend $((800 * 86400)) >/dev/null
+# A mismatched pair (as if caught between the two renames that swap key.pem and cert.pem into
+# place) is detected and fixed, not kept.
+openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$WEB_LAN_DIR/key.pem" 2>/dev/null
+fp4=$("$S"); [[ $fp4 =~ $FP_RE ]] || { echo "bad fingerprint after a mismatch: $fp4" >&2; exit 1; }
+[ "$(openssl pkey -in "$WEB_LAN_DIR/key.pem" -pubout)" = "$(openssl x509 -in "$WEB_LAN_DIR/cert.pem" -noout -pubkey)" ] \
+  || { echo "mismatched key/cert pair was not fixed" >&2; exit 1; }
 echo "web-lan-cert OK"
