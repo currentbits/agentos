@@ -5,6 +5,14 @@ set -euo pipefail
 . /usr/local/lib/agentos/env.sh
 
 AK=/home/agent/.ssh/authorized_keys
+WEB_CONF=${WEB_CONF:-/etc/agentos/web.conf}   # test hook
+
+# A password change must drop any live LAN web UI sessions (lan.ts keeps them only in memory, keyed
+# off the old password's success): the simplest way to end them is to restart the service. A no-op
+# when LAN access is off, or the restart itself fails (the new password is still set either way).
+restart_web_for_password_change() {
+  if grep -qx LAN=1 "$WEB_CONF" 2>/dev/null; then systemctl restart agentos-web.service || true; fi
+}
 
 # VALUE "-" means "read it from stdin": the web UI passes values that way because sudo logs its
 # argv to the journal, and a secret must never land there. An empty secret value clears it.
@@ -116,7 +124,7 @@ menu() {
       solenta   "Solenta: pairing values and preflight" \
       done      "Apply and exit" 3>&1 1>&2 2>&3) || c=done
     case $c in
-      password)  passwd agent || true ;;
+      password)  passwd agent && restart_web_for_password_change || true ;;
       # cmd_* use `exit` on bad input: run them in a subshell so a failure returns to the menu.
       sshkey)    if k=$(whiptail --inputbox "Paste SSH public key" 10 72 3>&1 1>&2 2>&3); then
                    err=$( (cmd_add_ssh_key "$k") 2>&1) || whiptail --msgbox "SSH key not added: $err" 10 72
@@ -160,7 +168,7 @@ case "${1:-}" in
                    cmd_add_ssh_key "$k" ;;
   remove-ssh-key)  cmd_remove_ssh_key "${2:?usage: agentos-config remove-ssh-key SHA256:...}" ;;
   github-keys)     cmd_github_keys "${2:?usage: agentos-config github-keys <user>}" ;;
-  password)        passwd agent ;;
+  password)        passwd agent && restart_web_for_password_change ;;
   apply)           cmd_apply ;;
   show-mcp-token)  cat /etc/agentos/mcp-token ;;
   show-web-fingerprint) cmd_show_web_fingerprint ;;
