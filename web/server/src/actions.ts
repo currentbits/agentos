@@ -12,6 +12,7 @@ export const CI = '/usr/local/bin/agentos-ci';
 export const SOLENTA_PAIR = '/usr/local/lib/agentos/solenta-pair';
 export const CI_ID_RE = /^\d{8}-\d{6}-[0-9a-f]{4}$/;
 export const UPDATE = '/usr/local/bin/agentos-update';
+export const CHECK_PASSWORD = '/usr/local/lib/agentos/check-password';
 export const UPDATE_LOCK = '/run/lock/agentos-update.lock';
 export const STEP_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
 export const GIT_REF_RE = /^[A-Za-z0-9_][A-Za-z0-9_./@^~{}-]{0,254}$/;   // agentos-ci's REF_RE
@@ -30,6 +31,7 @@ export type Action =
   | { name: 'update-check' }                         // as root: refreshes only the AgentOS source
   | { name: 'update-version' }
   | { name: 'update-running' }                       // exits non-zero while agentos-update holds its lock
+  | { name: 'check-password' }                      // the password on stdin, never argv
   | { name: 'reboot' }
   | { name: 'poweroff' }
   | { name: 'desktop-start'; n: number }
@@ -62,6 +64,7 @@ export function argv(a: Action): string[] {
     case 'update-check': return [...sudo, UPDATE, '--check'];
     case 'update-version': return [UPDATE, '--version'];
     case 'update-running': return ['flock', '-n', UPDATE_LOCK, 'true'];
+    case 'check-password': return [...sudo, CHECK_PASSWORD];
     case 'reboot': return [...sudo, 'systemctl', 'reboot'];
     case 'poweroff': return [...sudo, 'systemctl', 'poweroff'];
     case 'desktop-start': need(DESKTOP_RE.test(String(a.n)), 'desktop'); return ['systemctl', '--no-ask-password', 'start', `agentos-desktop@${a.n}.service`];

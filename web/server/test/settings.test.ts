@@ -104,3 +104,13 @@ describe('ssh keys', () => {
     expect(calls).toEqual([]);
   });
 });
+
+describe('apply failures', () => {
+  it('a failed apply reports agentos-config\'s last stderr line (LAN access without a password)', async () => {
+    const why = 'LAN access to the web UI is not on: set a password for agent first (sudo agentos-config password), then apply again';
+    const { deps } = fakeDeps((argv) => (argv[3] === 'apply' ? { code: 3, stderr: `Job ok\n${why}\n` } : {}));
+    const r = await (await buildApp(deps)).inject({ method: 'PUT', url: '/api/settings', headers: HM, payload: { values: { AGENTOS_WEB_LAN: '1' } } });
+    expect(r.statusCode).toBe(502);
+    expect(r.json().error).toBe(`saved, but applying failed: ${why}`);
+  });
+});

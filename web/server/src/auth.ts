@@ -6,7 +6,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 export const PORT = 7070;
 export const LOOPBACK_HOSTS = [`127.0.0.1:${PORT}`, `localhost:${PORT}`];
 
-export interface WebConf { users: string[]; enabled: boolean; serve: string }
+export interface WebConf { users: string[]; enabled: boolean; serve: string; lan: boolean; fingerprint: string }
 
 export function parseWebConf(text: string): WebConf {
   const get = (k: string) => text.match(new RegExp(`^${k}=(.*)$`, 'm'))?.[1].trim() ?? '';
@@ -14,6 +14,8 @@ export function parseWebConf(text: string): WebConf {
     users: get('USERS').split(',').map((u) => u.trim().toLowerCase()).filter(Boolean),
     enabled: get('ENABLED') !== '0',
     serve: get('SERVE'),
+    lan: get('LAN') === '1',            // the LAN listener (lan.ts), written by web-conf
+    fingerprint: get('FINGERPRINT'),    // its certificate's SHA-256, AB:CD:...
   };
 }
 
@@ -82,10 +84,10 @@ export function decide(f: RequestFacts, users: string[], tsName: string | null):
   return { ok: true, login };
 }
 
-const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
+export const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
 
 declare module 'fastify' {
-  interface FastifyRequest { login: string }
+  interface FastifyRequest { login: string; lan: boolean }   // lan: arrived on the LAN listener
 }
 
 export function authHook(conf: () => WebConf, tsName: () => Promise<string | null>) {

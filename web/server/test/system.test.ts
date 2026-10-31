@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 import { hostname } from 'node:os';
 import { describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
-import { cpuPercent, parseCpu, parseMeminfo, parseTailscale, parseUnits, streamToSocket } from '../src/system.js';
+import { cpuPercent, lanAddresses, parseCpu, parseMeminfo, parseTailscale, parseUnits, streamToSocket } from '../src/system.js';
 import { fakeDeps, HM, LOGIN } from './helpers.js';
 
 // A minimal fake WebSocket: an EventEmitter with the bits streamToSocket touches.
@@ -107,5 +107,14 @@ describe('system parsers', () => {
     await delay(200);
     expect(alive(updatePid)).toBe(true);
     process.kill(updatePid, 'SIGKILL');
+  });
+});
+
+describe('lanAddresses', () => {
+  it('lists IPv4 addresses on the local network only: not loopback, Tailscale or Docker', () => {
+    const a = (address: string, family = 'IPv4', internal = false) => ({ address, family, internal, netmask: '', mac: '', cidr: null });
+    const ifs = { lo: [a('127.0.0.1', 'IPv4', true)], enp1s0: [a('192.168.1.50'), a('fe80::1', 'IPv6')], wlan0: [a('10.0.0.7')],
+      tailscale0: [a('100.64.0.1')], docker0: [a('172.17.0.1')], 'br-4a06': [a('172.18.0.1')], veth1: [a('169.254.1.1')] };
+    expect(lanAddresses(ifs as never)).toEqual(['192.168.1.50', '10.0.0.7']);
   });
 });

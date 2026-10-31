@@ -1,7 +1,7 @@
 // System: health, services, journal tail and updates (streamed over WebSocket), power.
 import { type ChildProcess, spawn } from 'node:child_process';
 import { readFile, stat, statfs } from 'node:fs/promises';
-import { hostname, loadavg } from 'node:os';
+import { hostname, loadavg, networkInterfaces } from 'node:os';
 import type { FastifyInstance } from 'fastify';
 import type { WebSocket } from 'ws';
 import { argv, runAction, UNIT_RE } from './actions.js';
@@ -43,6 +43,13 @@ export function parseTailscale(json: string): TailscaleState {
   } catch {
     return { state: 'unavailable', dnsName: null, ip: null };
   }
+}
+
+// This box's IPv4 addresses on the local network: not loopback, Tailscale or Docker's bridges
+// (web-conf's lan_ipv4s, for the console, uses the same rule).
+export function lanAddresses(ifs = networkInterfaces()): string[] {
+  return Object.entries(ifs).flatMap(([name, l]) => (/^(lo|tailscale|docker|br-|veth)/.test(name) ? [] : l ?? [])
+    .filter((a) => a.family === 'IPv4' && !a.internal).map((a) => a.address));
 }
 
 let prevCpu: CpuSample | null = null;
@@ -109,7 +116,12 @@ let updateRunning = false;
 export function systemRoutes(app: FastifyInstance, deps: Deps): void {
   app.get('/api/me', async (req) => {
     const ts = await tailscale(deps);
-    return { login: req.login, hostname: hostname(), tailnetIp: ts.ip, tailnetName: ts.dnsName };
+    return { login: req.login, hostname: hostname(), tailnetIp: ts.ip, tailnetName: ts.dnsName, lan: req.lan };
+  });
+  // LAN access, for the System page: the certificate's fingerprint and the addresses to type.
+  app.get('/api/system/lan', async () => {
+    const c = deps.webConf();
+    return { enabled: c.lan, fingerprint: c.lan && c.fingerprint ? c.fingerprint : null, addresses: lanAddresses() };
   });
   app.get('/api/system/health', async () => health());
   app.get('/api/system/tailscale', async () => ({ ...(await tailscale(deps)), serve: deps.webConf().serve || 'unknown' }));

@@ -12,7 +12,7 @@ export const SECRET_KEYS = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'XAI_API_KEY'
 // firstboot deletes it once used): the UI shows Tailscale's own status instead.
 export const WRITE_ONLY_KEYS = [...SECRET_KEYS, 'TS_AUTHKEY'];
 export const PLAIN_KEYS = ['AGENTOS_LAN_SSH', 'AGENTOS_CONSOLE', 'AGENTOS_AUTO_REBOOT', 'AGENTOS_MAX_DESKTOPS',
-  'AGENTOS_SCREENSHOT_WIDTH', 'AGENTOS_DESKTOP_IDLE_MINUTES', 'AGENTOS_WEB_USERS', 'AGENTOS_WEB',
+  'AGENTOS_SCREENSHOT_WIDTH', 'AGENTOS_DESKTOP_IDLE_MINUTES', 'AGENTOS_WEB_USERS', 'AGENTOS_WEB', 'AGENTOS_WEB_LAN',
   'AGENTOS_SOLENTA', 'AGENTOS_CI_MAX_PARALLEL'];
 
 export interface SettingsView { values: Record<string, string>; secrets: Record<string, boolean> }
@@ -55,7 +55,9 @@ export async function saveSettings(deps: Deps, values: Record<string, unknown>, 
   const r = await runAction(deps.run, { name: 'config-apply' }, { timeoutMs: 300_000 });
   deps.audit(login, 'config-apply', '-');
   if (failed) throw failed;
-  if (r.code !== 0) throw new HttpError(502, 'saved, but applying failed: see journalctl -u agentos-firstboot');
+  // agentos-config apply says why on its last stderr line (e.g. LAN access needs a password).
+  const why = r.stderr.trim().split('\n').pop();
+  if (r.code !== 0) throw new HttpError(502, `saved, but applying failed: ${why || 'see journalctl -u agentos-firstboot'}`);
 }
 
 export interface SshKey { bits: string; fingerprint: string; comment: string; type: string }

@@ -70,8 +70,10 @@ describe('CSRF', () => {
 
 describe('config parsing', () => {
   it('parses web.conf', () => {
-    expect(parseWebConf('USERS=a@x.com, B@y.org\nENABLED=1\nSERVE=ok\n')).toEqual({ users: ['a@x.com', 'b@y.org'], enabled: true, serve: 'ok' });
-    expect(parseWebConf('')).toEqual({ users: [], enabled: true, serve: '' });
+    expect(parseWebConf('USERS=a@x.com, B@y.org\nENABLED=1\nSERVE=ok\nLAN=1\nFINGERPRINT=AB:CD\n'))
+      .toEqual({ users: ['a@x.com', 'b@y.org'], enabled: true, serve: 'ok', lan: true, fingerprint: 'AB:CD' });
+    expect(parseWebConf('')).toEqual({ users: [], enabled: true, serve: '', lan: false, fingerprint: '' });
+    expect(parseWebConf('LAN=0\nFINGERPRINT=\n').lan).toBe(false);
     expect(parseWebConf('ENABLED=0\n').enabled).toBe(false);
   });
   it('parses the tailnet name', () => {
@@ -80,6 +82,6 @@ describe('config parsing', () => {
     expect(parseTailnetName('not json')).toBeNull();
   });
   it('readWebConf on a missing file falls back to not-configured', () => {
-    expect(readWebConf('/nonexistent/path/web.conf')).toEqual({ users: [], enabled: true, serve: '' });
+    expect(readWebConf('/nonexistent/path/web.conf')).toEqual({ users: [], enabled: true, serve: '', lan: false, fingerprint: '' });
   });
 });
