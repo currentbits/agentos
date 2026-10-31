@@ -192,6 +192,10 @@ check_web_lan_login_end_to_end() {
   vm 'sudo chpasswd' <<< "agent:$LANPW" &&
   vm 'sudo agentos-config set AGENTOS_WEB_LAN 1 && sudo agentos-config apply && grep -qx LAN=1 /etc/agentos/web.conf' && lan_up || rc=1
   if [ "$rc" = 0 ]; then
+    # Braced as one group: an assertion below with no "|| rc=1" of its own still short-circuits the
+    # rest of the chain (as intended), but must not let the whole thing read back as a pass just
+    # because the unrelated cleanup past "fi" succeeds on its own.
+    {
     # Unauthenticated: the login page for a page, 401 for the API; a foreign Host is refused.
     lan "https://$GIP/" | grep -q 'Password of <code>agent</code>' &&
     [ "$(lan_code "https://$GIP/api/me")" = 401 ] &&
@@ -252,7 +256,8 @@ check_web_lan_login_end_to_end() {
     [ "$(lan_code -H "Cookie: $cookie2" "https://$GIP/api/me")" = 200 ] &&
     vm "printf '%s\n%s\n' '$LANPW2' '$LANPW2' | sudo agentos-config password" &&
     lan_up &&
-    [ "$(lan_code -H "Cookie: $cookie2" "https://$GIP/api/me")" = 401 ] || rc=1
+    [ "$(lan_code -H "Cookie: $cookie2" "https://$GIP/api/me")" = 401 ]
+    } || rc=1
   fi
   # Off again: the password goes back to what it was, and 443 is closed.
   vm 'sudo agentos-config set AGENTOS_WEB_LAN 0 && sudo agentos-config apply && grep -qx LAN=0 /etc/agentos/web.conf' || rc=1
