@@ -218,10 +218,11 @@ check_web_lan_login_end_to_end() {
     cookie=$(printf '%s' "$hdr" | tr -d '\r' | sed -n 's/^set-cookie: \(__Host-agentos-session=[A-Za-z0-9_-]\{43\}\); Secure; HttpOnly; SameSite=Strict; Path=\/$/\1/ip')
     [ -n "$cookie" ] &&
     lan -H "Cookie: $cookie" "https://$GIP/api/me" | grep -q '"login":"agent@lan(10.0.2.2)".*"lan":true' &&
-    # CSRF: an unsafe action needs X-AgentOS (and the Origin), then works.
+    # CSRF: an unsafe action needs X-AgentOS (and the Origin), then works. Creating a session is a
+    # 201 (Created), not a 200: sessions.ts's reply.code(201).
     [ "$(lan_code -X POST -H "Cookie: $cookie" -H "Origin: https://$GIP" -H 'Content-Type: application/json' \
           -d '{"cli":"shell","name":"lan"}' "https://$GIP/api/sessions")" = 403 ] &&
-    [ "$(lan_post -H "Cookie: $cookie" -d '{"cli":"shell","name":"lan"}' "https://$GIP/api/sessions")" = 200 ] &&
+    [ "$(lan_post -H "Cookie: $cookie" -d '{"cli":"shell","name":"lan"}' "https://$GIP/api/sessions")" = 201 ] &&
     # The terminal WebSocket, through the real 443 redirect (direct, unredirected 7443 is refused
     # by design: finding 2). This runs here, not on the guest, so it can dial the forwarded port
     # while still sending the guest's own address as Host/Origin.
