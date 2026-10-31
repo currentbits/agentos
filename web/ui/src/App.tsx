@@ -1,4 +1,4 @@
-import { api } from './api';
+import { api, page as browser } from './api';
 import { Link, usePath } from './router';
 import type { Me, UpdateState } from './types';
 import { usePoll } from './usePoll';
@@ -38,6 +38,7 @@ export function App() {
         <span>{me?.hostname}</span>
         <span>{me?.tailnetIp ?? 'tailnet down'}</span>
         <span className="login">{me?.login}</span>
+        {me?.lan && <button onClick={() => { void api('/api/lan/logout', 'POST').finally(browser.reload); }}>Log out</button>}
       </header>
       <nav>
         {NAV.map(([to, label]) => <Link key={to} to={to} className={section === to ? 'active' : ''}>{label}</Link>)}

@@ -29,6 +29,7 @@ const SOLENTA_CI: FieldSpec[] = [
 const WEB: FieldSpec[] = [
   { key: 'AGENTOS_WEB_USERS', label: 'Allowed tailnet logins (comma-separated)', type: 'text' },
   { key: 'AGENTOS_WEB', label: 'Web UI enabled', type: 'bool' },
+  { key: 'AGENTOS_WEB_LAN', label: 'Also on the local network, with the password of agent (https://<LAN address>)', type: 'bool' },
 ];
 
 // AGENTOS_AUTO_REBOOT, AGENTOS_WEB and AGENTOS_SOLENTA default to on when unset: show unset as '1'.
@@ -53,6 +54,8 @@ export function Settings({ me }: { me: Me | null }) {
     if (users !== undefined && me && !users.toLowerCase().split(',').map((u) => u.trim()).includes(me.login)) {
       if (!confirmAction(`${me.login} is not in the new list: you will lose access to this page. Continue?`)) return false;
     }
+    if (changed.AGENTOS_WEB_LAN === '1' && !confirmAction('Anyone on your local network who knows the password of agent gets full control of this machine. Tailscale is safer. Allow LAN access?')) return false;
+    if (changed.AGENTOS_WEB_LAN === '0' && me?.lan && !confirmAction('You are using LAN access: you will lose this page. Continue?')) return false;
     return changed.AGENTOS_WEB !== '0' || confirmAction('Disable the web UI? You will need SSH or the console to turn it back on.');
   };
   const s = settings.data;

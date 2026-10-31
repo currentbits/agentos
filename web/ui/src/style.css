@@ -45,3 +45,4 @@ fieldset { border: 0; padding: 0; display: flex; gap: 16px; }
 .copy code { overflow-wrap: anywhere; }
 .banner { border-color: var(--accent); }
 .notes { white-space: pre-wrap; max-height: 240px; overflow: auto; background: var(--bg); padding: 8px; }
+.fingerprint { word-break: break-all; }

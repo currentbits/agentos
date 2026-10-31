@@ -1,4 +1,5 @@
-export interface Me { login: string; hostname: string; tailnetIp: string | null; tailnetName: string | null }
+export interface Me { login: string; hostname: string; tailnetIp: string | null; tailnetName: string | null; lan: boolean }
+export interface LanInfo { enabled: boolean; fingerprint: string | null; addresses: string[] }
 export interface Session { id: string; name: string; cli: string | null; dir: string | null; created: string | null; attached: number; state: 'running' | 'ended'; external: boolean }
 export interface Desktop { id: number; idleSeconds: number | null; idleLimitMinutes: number; viewers: number }
 export interface Health { cpuPercent: number; load: number[]; memory: { totalBytes: number; usedBytes: number }; disk: { totalBytes: number; usedBytes: number } }
