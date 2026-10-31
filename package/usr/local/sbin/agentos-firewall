@@ -6,3 +6,8 @@ nft -f /usr/local/lib/agentos/firewall.nft
 if [ "$(env_get "$AGENTOS_ENV" AGENTOS_LAN_SSH)" = 1 ]; then
   nft add element inet agentos public_tcp '{ 22 }'
 fi
+# The web UI on the LAN: 443 is redirected to agentos-web's LAN listener (firewall.nft). web.conf,
+# not agentos.env: LAN=1 only once web-conf found a password and made the certificate.
+if grep -qx LAN=1 /etc/agentos/web.conf 2>/dev/null; then
+  nft add element inet agentos lan_web '{ 443 }'
+fi

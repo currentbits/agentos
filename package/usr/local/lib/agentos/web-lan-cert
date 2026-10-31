@@ -1,0 +1,26 @@
+#!/bin/bash
+# web-lan-cert: make sure the web UI's LAN certificate exists, then print its SHA-256 fingerprint
+# (AB:CD:..., as openssl and browsers show it). Self-signed ECDSA P-256 for the hostname,
+# <hostname>.local and the IPv4 addresses present now. Kept across boots and updates; made again
+# when it is deleted or within 30 days of expiring. 825 days and serverAuth: Apple's TLS rules for
+# macOS and iOS (support.apple.com/103769) refuse longer-lived server certificates.
+set -euo pipefail
+. "${AGENTOS_LIB:-/usr/local/lib/agentos}/env.sh"
+D=${WEB_LAN_DIR:-/etc/agentos/web-lan}
+G=${WEB_LAN_GROUP:-agent}     # agentos-web's group: it reads the key
+if [ ! -s "$D/key.pem" ] || ! openssl x509 -in "$D/cert.pem" -noout -checkend $((30 * 86400)) >/dev/null 2>&1; then
+  h=$(hostname)
+  san="DNS:$h,DNS:$h.local"
+  for ip in $(lan_ipv4s); do
+    san+=",IP:$ip"
+  done
+  install -d -m 750 -g "$G" "$D"
+  rm -f "$D/key.pem.tmp" "$D/cert.pem.tmp"
+  (umask 077
+   openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 825 -subj "/CN=$h" \
+     -addext "subjectAltName=$san" -addext "extendedKeyUsage=serverAuth" \
+     -keyout "$D/key.pem.tmp" -out "$D/cert.pem.tmp" 2>/dev/null)
+  chgrp "$G" "$D/key.pem.tmp"; chmod 640 "$D/key.pem.tmp"; chmod 644 "$D/cert.pem.tmp"
+  mv "$D/key.pem.tmp" "$D/key.pem"; mv "$D/cert.pem.tmp" "$D/cert.pem"
+fi
+openssl x509 -in "$D/cert.pem" -noout -fingerprint -sha256 | sed 's/^[^=]*=//'

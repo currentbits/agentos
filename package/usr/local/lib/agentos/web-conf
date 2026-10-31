@@ -1,0 +1,44 @@
+#!/bin/bash
+# web-conf: agentos-firstboot's web UI step. Publishes the web UI on the tailnet (web-serve), makes
+# the LAN certificate when AGENTOS_WEB_LAN=1 (web-lan-cert), and writes /etc/agentos/web.conf for
+# agentos-web (which runs as agent: agentos.env is root-only).
+# Prints "restart" when the LAN listener changed: agentos-web sets it up when it starts.
+# Invalid settings fall back to their defaults.
+set -euo pipefail
+L=${AGENTOS_LIB:-/usr/local/lib/agentos}
+. "$L/env.sh"
+E=${AGENTOS_ETC:-/etc/agentos}
+AGENTOS_ENV=$E/agentos.env
+ISSUE=${ISSUE_DIR:-/run/issue.d}/50-agentos-web.issue
+
+wu=$(env_get "$AGENTOS_ENV" AGENTOS_WEB_USERS)
+validate_setting AGENTOS_WEB_USERS "$wu" 2>/dev/null || wu=
+we=$(env_get "$AGENTOS_ENV" AGENTOS_WEB | grep -x 0 || echo 1)
+wl=$(env_get "$AGENTOS_ENV" AGENTOS_WEB_LAN | grep -x 1 || echo 0)
+[ "$we" = 1 ] || wl=0
+fp=
+if [ "$wl" = 1 ]; then
+  if ! agent_has_password; then
+    echo "warning: web UI: LAN access needs a password for agent (sudo agentos-config password); it stays off" >&2
+    wl=0
+  elif ! fp=$("$L/web-lan-cert"); then
+    echo "warning: web UI: could not make the LAN certificate; LAN access stays off" >&2
+    wl=0 fp=
+  fi
+fi
+ws=$("$L/web-serve" "$we")   # ok | off | tailscale-down | failed: <why>
+
+was=$(grep -E '^(LAN|FINGERPRINT)=' "$E/web.conf" 2>/dev/null || true)
+printf 'USERS=%s\nENABLED=%s\nSERVE=%s\nLAN=%s\nFINGERPRINT=%s\n' "$wu" "$we" "$ws" "$wl" "$fp" > "$E/web.conf.tmp"
+chmod 644 "$E/web.conf.tmp"
+mv "$E/web.conf.tmp" "$E/web.conf"
+
+# Say why on the console too: agetty prints /run/issue.d/*.issue after /etc/issue.
+if [[ $ws == failed* ]]; then
+  echo "warning: web UI: tailscale serve $ws" >&2   # to the journal (docs/tailscale-acl.md)
+  install -d "$(dirname "$ISSUE")"
+  printf 'Web UI: tailscale serve %s\n\n' "$ws" > "$ISSUE"
+else
+  rm -f "$ISSUE"
+fi
+[ "$was" = "$(grep -E '^(LAN|FINGERPRINT)=' "$E/web.conf")" ] || echo restart

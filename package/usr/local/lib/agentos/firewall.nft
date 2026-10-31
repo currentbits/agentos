@@ -4,6 +4,15 @@ delete table inet agentos
 
 table inet agentos {
   set public_tcp { type inet_service; }
+  set lan_web { type inet_service; }      # 443 while AGENTOS_WEB_LAN=1 (agentos-firewall)
+
+  # The web UI's LAN listener is 0.0.0.0/[::]:7443 (agentos-web, as agent): LAN connections to 443
+  # are redirected to it. Not a listener on 443 itself: tailscaled binds <tailnet-ip>:443 for
+  # `tailscale serve`, and either side's bind would fail while the other holds the port.
+  chain prerouting {
+    type nat hook prerouting priority dstnat; policy accept;
+    iifname != "tailscale0" tcp dport @lan_web redirect to :7443
+  }
 
   chain input {
     type filter hook input priority filter; policy drop;
@@ -15,6 +24,7 @@ table inet agentos {
     udp dport { 68, 546 } accept          # DHCP / DHCPv6 replies
     udp dport 41641 accept                # Tailscale direct connections
     tcp dport @public_tcp accept          # AGENTOS_LAN_SSH etc.
+    tcp dport 7443 ct status dnat accept  # the web UI, only as redirected from 443 above
   }
 
   # The web UI (127.0.0.1:7070) trusts its identity header, so only tailscaled (root, for

@@ -75,7 +75,17 @@ cmd_solenta() {
 
 # Run as its own unit: firstboot ends with agentos-console-apply, which restarts getty@tty1 and
 # would kill a menu running there (agentos-config-tty) if firstboot ran inside it.
-cmd_apply() { systemctl restart agentos-firstboot.service; }
+# LAN access to the web UI needs a password for agent: firstboot (web-conf) leaves it off without
+# one, and apply says so, last on stderr (the web UI's Settings page shows that line).
+cmd_apply() {
+  local rc=0
+  systemctl restart agentos-firstboot.service || rc=$?
+  if [ "$(env_get "$AGENTOS_ENV" AGENTOS_WEB_LAN)" = 1 ] && ! agent_has_password; then
+    echo "LAN access to the web UI is not on: set a password for agent first (sudo agentos-config password), then apply again" >&2
+    rc=3
+  fi
+  return "$rc"
+}
 
 # cmd_set exits on an invalid value: run it in a subshell so the menu survives and says why.
 menu_set() { local err; err=$( (cmd_set "$1" "$2") 2>&1) || whiptail --msgbox "$1 not saved: $err" 10 72; }

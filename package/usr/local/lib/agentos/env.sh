@@ -36,7 +36,7 @@ validate_setting() {
   local re want
   [ -z "$2" ] && return 0
   case $1 in
-    AGENTOS_LAN_SSH|AGENTOS_AUTO_REBOOT|AGENTOS_WEB|AGENTOS_SOLENTA) re='^[01]$'; want='0 or 1' ;;
+    AGENTOS_LAN_SSH|AGENTOS_AUTO_REBOOT|AGENTOS_WEB|AGENTOS_WEB_LAN|AGENTOS_SOLENTA) re='^[01]$'; want='0 or 1' ;;
     AGENTOS_CONSOLE)              re='^(headless|terminal)$'; want='headless or terminal' ;;
     AGENTOS_MAX_DESKTOPS|AGENTOS_CI_MAX_PARALLEL) re='^([1-9]|1[0-6])$'; want='a number from 1 to 16' ;;
     AGENTOS_SCREENSHOT_WIDTH)     re='^(6[4-9][0-9]|[7-9][0-9]{2}|1[0-8][0-9]{2}|19[01][0-9]|1920)$'; want='a number from 640 to 1920' ;;
@@ -45,4 +45,13 @@ validate_setting() {
     *) return 0 ;;
   esac
   [[ $2 =~ $re ]] || { echo "$1 must be $want" >&2; return 2; }
+}
+
+# agent_has_password: 0 if agent has a usable password (passwd -S says P: not none, not locked).
+agent_has_password() { [ "$(passwd -S agent 2>/dev/null | awk '{print $2}')" = P ]; }
+
+# lan_ipv4s: this box's IPv4 addresses on the local network, one per line: not loopback, Tailscale
+# or Docker's bridges (the web server's lanAddresses() uses the same rule).
+lan_ipv4s() {
+  ip -4 -o addr show scope global | awk '$2 !~ /^(tailscale|docker|br-|veth)/ { sub(/\/.*/, "", $4); print $4 }'
 }

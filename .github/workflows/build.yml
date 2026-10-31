@@ -43,6 +43,8 @@ jobs:
             package/usr/local/bin/* package/usr/local/sbin/* package/usr/local/lib/agentos/*.sh \
             package/etc/profile.d/agentos.sh \
             package/usr/local/lib/agentos/web-serve test/web_serve_test.sh \
+            package/usr/local/lib/agentos/web-conf package/usr/local/lib/agentos/web-lan-cert \
+            test/web_conf_test.sh test/web_lan_cert_test.sh test/check_password_test.sh \
             package/usr/local/lib/agentos/{cli-wrapper,register-mcp,solenta-pair,solenta-start} \
             package/usr/local/lib/agentos/ci/post-receive tools/solenta-bridge \
             package/usr/local/lib/agentos/configure package/usr/local/lib/agentos/migrations/*.sh package/DEBIAN/postinst \
@@ -56,6 +58,10 @@ jobs:
           test/installer_test.sh
           python3 test/computer_test.py
           test/web_serve_test.sh
+          perl -c package/usr/local/lib/agentos/check-password
+          test/check_password_test.sh
+          test/web_lan_cert_test.sh
+          test/web_conf_test.sh
           test/wrapper_test.sh
           test/solenta_pair_test.sh
           test/bridge_test.sh
