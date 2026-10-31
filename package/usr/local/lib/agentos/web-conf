@@ -1,7 +1,7 @@
 #!/bin/bash
 # web-conf: agentos-firstboot's web UI step. Publishes the web UI on the tailnet (web-serve), makes
 # the LAN certificate when AGENTOS_WEB_LAN=1 (web-lan-cert), and writes /etc/agentos/web.conf for
-# agentos-web (which runs as agent: agentos.env is root-only).
+# agentos-web (which runs as agent: agentos.env is root-only) and the console's "Web UI:" lines.
 # Prints "restart" when the LAN listener changed: agentos-web sets it up when it starts.
 # Invalid settings fall back to their defaults.
 set -euo pipefail
@@ -33,12 +33,23 @@ printf 'USERS=%s\nENABLED=%s\nSERVE=%s\nLAN=%s\nFINGERPRINT=%s\n' "$wu" "$we" "$
 chmod 644 "$E/web.conf.tmp"
 mv "$E/web.conf.tmp" "$E/web.conf"
 
-# Say why on the console too: agetty prints /run/issue.d/*.issue after /etc/issue.
-if [[ $ws == failed* ]]; then
-  echo "warning: web UI: tailscale serve $ws" >&2   # to the journal (docs/tailscale-acl.md)
-  install -d "$(dirname "$ISSUE")"
-  printf 'Web UI: tailscale serve %s\n\n' "$ws" > "$ISSUE"
-else
-  rm -f "$ISSUE"
-fi
+# The console: agetty prints /run/issue.d/*.issue after /etc/issue. The fingerprint is split in two
+# halves of 16 bytes, so each line fits 80 columns.
+[[ $ws != failed* ]] || echo "warning: web UI: tailscale serve $ws" >&2   # docs/tailscale-acl.md
+install -d "$(dirname "$ISSUE")"
+{
+  if [ "$wl" = 1 ]; then
+    ips=$(lan_ipv4s | head -2)
+    for ip in ${ips:-$(hostname)}; do printf 'Web UI: https://%s  (LAN login)\n' "$ip"; done
+    printf 'LAN certificate SHA-256: %s\n                         %s\n' "${fp:0:47}" "${fp:48}"
+  fi
+  if [ "$ws" = ok ]; then
+    n=$("${TAILSCALE:-tailscale}" status --json 2>/dev/null | jq -r '.Self.DNSName // empty' | sed 's/\.$//') || n=
+    [ -z "$n" ] || printf 'Web UI: https://%s\n' "$n"
+  elif [[ $ws == failed* ]]; then
+    printf 'Web UI: tailscale serve %s\n' "$ws"
+  fi
+  [ "$wl" = 1 ] || [ "$ws" = ok ] || echo 'Web UI: off. Enable it with sudo agentos-config (Tailscale or LAN access)'
+  echo
+} > "$ISSUE"
 [ "$was" = "$(grep -E '^(LAN|FINGERPRINT)=' "$E/web.conf")" ] || echo restart

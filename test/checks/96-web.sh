@@ -19,7 +19,8 @@ check_web_unit_shape() {
 check_web_conf_published() {
   # No tailnet in the smoke VM: serve is skipped, and no console warning is shown.
   vm 'test "$(stat -c %a /etc/agentos/web.conf)" = 644 && grep -qx ENABLED=1 /etc/agentos/web.conf &&
-      grep -qx SERVE=tailscale-down /etc/agentos/web.conf && test ! -e /run/issue.d/50-agentos-web.issue'
+      grep -qx SERVE=tailscale-down /etc/agentos/web.conf && grep -qx LAN=0 /etc/agentos/web.conf &&
+      grep -qx "Web UI: off. Enable it with sudo agentos-config (Tailscale or LAN access)" /run/issue.d/50-agentos-web.issue'
 }
 check_web_disable_and_enable() {
   local rc=0

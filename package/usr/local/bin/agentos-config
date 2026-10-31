@@ -86,6 +86,11 @@ cmd_apply() {
   fi
   return "$rc"
 }
+cmd_show_web_fingerprint() {
+  local fp; fp=$(sed -n 's/^FINGERPRINT=//p' /etc/agentos/web.conf 2>/dev/null)
+  [ -n "$fp" ] || { echo "LAN access to the web UI is off: sudo agentos-config set AGENTOS_WEB_LAN 1 && sudo agentos-config apply" >&2; return 1; }
+  printf '%s\n' "$fp"
+}
 
 # cmd_set exits on an invalid value: run it in a subshell so the menu survives and says why.
 menu_set() { local err; err=$( (cmd_set "$1" "$2") 2>&1) || whiptail --msgbox "$1 not saved: $err" 10 72; }
@@ -94,7 +99,7 @@ menu() {
   while true; do
     local c
     # shellcheck disable=SC1010 # "done" below is a whiptail menu tag, not the loop keyword
-    c=$(whiptail --title "AgentOS configuration" --menu "Choose a setting" 22 72 12 \
+    c=$(whiptail --title "AgentOS configuration" --menu "Choose a setting" 24 72 14 \
       password  "Set password for 'agent' (console + sudo)" \
       sshkey    "Add an SSH public key" \
       github    "Import SSH keys from a GitHub username" \
@@ -105,6 +110,8 @@ menu() {
       desktops  "Desktops: max count and screenshot width" \
       reboot    "Auto-reboot for kernel security updates" \
       webui     "Web UI: tailnet logins allowed to use it" \
+      weblan    "Web UI on the local network (password login)" \
+      webfp     "Show the web UI's LAN certificate fingerprint" \
       mcptoken  "Show MCP HTTP bearer token" \
       solenta   "Solenta: pairing values and preflight" \
       done      "Apply and exit" 3>&1 1>&2 2>&3) || c=done
@@ -131,6 +138,11 @@ menu() {
                  i=$(whiptail --inputbox "Stop an idle, unwatched desktop after this many minutes (0 = never, default 120)" 10 60 "$(cmd_get AGENTOS_DESKTOP_IDLE_MINUTES || true)" 3>&1 1>&2 2>&3) && [ -n "$i" ] && menu_set AGENTOS_DESKTOP_IDLE_MINUTES "$i" || true ;;
       reboot)    if whiptail --yesno "Reboot automatically at 04:00 when a kernel update requires it?" 8 70; then cmd_set AGENTOS_AUTO_REBOOT 1; else cmd_set AGENTOS_AUTO_REBOOT 0; fi ;;
       webui)     u=$(whiptail --inputbox "Tailnet logins allowed to use the web UI, comma-separated (you@example.com). Empty = nobody." 10 72 "$(cmd_get AGENTOS_WEB_USERS || true)" 3>&1 1>&2 2>&3) && menu_set AGENTOS_WEB_USERS "$u" || true ;;
+      weblan)    if whiptail --defaultno --yesno "Allow the web UI on your local network, at https://<this machine's address>, with the password of 'agent'?\n\nAnyone on your network who knows that password gets full control of this machine. Tailscale is safer." 12 74; then
+                   agent_has_password || { whiptail --msgbox "LAN access needs a password for 'agent'. Set one now." 8 60; passwd agent || true; }
+                   cmd_set AGENTOS_WEB_LAN 1
+                 else cmd_set AGENTOS_WEB_LAN 0; fi ;;
+      webfp)     whiptail --msgbox "$(fp=$(cmd_show_web_fingerprint 2>&1) && printf 'Compare this with the certificate your browser shows for https://<this machine>:\n\n%s' "$fp" || printf '%s' "$fp")" 12 76 ;;
       solenta)   whiptail --scrolltext --title Solenta --msgbox "$(cmd_solenta 2>&1)" 24 76 ;;
       mcptoken)  whiptail --msgbox "$(cat /etc/agentos/mcp-token)\n\nThis token (and any view_url built from it) gives full control of the desktops: treat it like a root password." 11 72 ;;
       done)      cmd_apply || whiptail --msgbox "Some settings failed to apply (see: journalctl -u agentos-firstboot). Tailscale key wrong?" 9 72
@@ -151,6 +163,7 @@ case "${1:-}" in
   password)        passwd agent ;;
   apply)           cmd_apply ;;
   show-mcp-token)  cat /etc/agentos/mcp-token ;;
+  show-web-fingerprint) cmd_show_web_fingerprint ;;
   solenta)         if [ "${2:-}" = clone ]; then
                      [ $# -eq 4 ] || { echo "usage: agentos-config solenta clone URL NAME" >&2; exit 2; }
                      runuser -u agent -- env -i HOME=/home/agent PATH=/usr/local/bin:/usr/bin:/bin \
@@ -159,5 +172,5 @@ case "${1:-}" in
                      [ $# -le 2 ] || { echo "usage: agentos-config solenta [PATH]" >&2; exit 2; }
                      cmd_solenta "${2:-}"
                    fi ;;
-  *)               echo "usage: agentos-config [set KEY VALUE|-|get KEY|add-ssh-key KEY|-|remove-ssh-key FINGERPRINT|github-keys USER|password|apply|show-mcp-token|solenta [PATH]|solenta clone URL NAME]" >&2; exit 2 ;;
+  *)               echo "usage: agentos-config [set KEY VALUE|-|get KEY|add-ssh-key KEY|-|remove-ssh-key FINGERPRINT|github-keys USER|password|apply|show-mcp-token|show-web-fingerprint|solenta [PATH]|solenta clone URL NAME]" >&2; exit 2 ;;
 esac

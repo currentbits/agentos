@@ -72,3 +72,24 @@ grep -qx 'Web UI: tailscale serve failed: Serve is not enabled on your tailnet.'
 printf 'AGENTOS_WEB_LAN=yes\n' > "$d/etc/agentos.env"; FAKE_PW=P FAKE_SERVE=off FAKE_CERT=ok "$R/web-conf" >/dev/null 2>&1
 grep -qx 'LAN=0' "$d/etc/web.conf" || fail "invalid value"
 echo "web-conf OK"
+
+# The console's "Web UI:" lines: two LAN addresses at most (not Tailscale or Docker), the fingerprint
+# in two halves, each line within 80 columns; the tailnet name when serve is on; else how to turn it on.
+OFF='Web UI: off. Enable it with sudo agentos-config (Tailscale or LAN access)'
+run 1 P tailscale-down >/dev/null
+[ "$(cat "$ISSUE")" = "Web UI: https://192.168.1.50  (LAN login)
+Web UI: https://10.0.0.7  (LAN login)
+LAN certificate SHA-256: B4:A0:73:5F:85:CC:CE:06:76:AE:B3:64:CA:36:6A:F8
+                         BC:6B:EF:B4:BC:FD:7F:9C:0E:CB:D9:6E:DE:D2:A9:B8" ] || fail "console, LAN on"
+awk 'length > 80 { exit 1 }' "$ISSUE" || fail "console line over 80 columns"
+run 1 P ok >/dev/null
+grep -qx 'Web UI: https://box.tail1234.ts.net' "$ISSUE" && grep -qx 'Web UI: https://192.168.1.50  (LAN login)' "$ISSUE" || fail "console, both"
+run 0 P ok >/dev/null
+[ "$(cat "$ISSUE")" = 'Web UI: https://box.tail1234.ts.net' ] || fail "console, tailscale only"
+for args in '1 L tailscale-down' '0 P tailscale-down' '1 P ok ok 0'; do
+  # shellcheck disable=SC2086 # deliberate word splitting into run's arguments
+  run $args >/dev/null; grep -qx "$OFF" "$ISSUE" || fail "console, off ($args)"
+done
+run 0 P 'failed: Serve is not enabled on your tailnet.' >/dev/null
+grep -qx 'Web UI: tailscale serve failed: Serve is not enabled on your tailnet.' "$ISSUE" && grep -qx "$OFF" "$ISSUE" || fail "console, serve failed"
+echo "web-conf console OK"

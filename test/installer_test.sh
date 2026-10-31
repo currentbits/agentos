@@ -136,4 +136,11 @@ for b in /sda /dev/nvme0n1 /var/tmp/x.img /sr /srx "" /; do
   if loop_backing_drive "$b" >/dev/null; then fail "loop_backing_drive accepted '$b'"; fi
 done
 
+# web_ui_summary: how the summary screen says the web UI will be reachable
+[ "$(web_ui_summary 0 0)" = 'off (turn it on later: sudo agentos-config)' ] || fail "web_ui_summary off"
+[ "$(web_ui_summary '' 0)" = 'off (turn it on later: sudo agentos-config)' ] || fail "web_ui_summary no key"
+[ "$(web_ui_summary 1 0)" = 'on the tailnet, once you allow your login (AGENTOS_WEB_USERS)' ] || fail "web_ui_summary tailnet"
+[ "$(web_ui_summary 0 1)" = 'https://<LAN address> (password login)' ] || fail "web_ui_summary LAN"
+[ "$(web_ui_summary 1 1)" = 'https://<LAN address> (password login); also on the tailnet, once you allow your login (AGENTOS_WEB_USERS)' ] || fail "web_ui_summary both"
+
 echo "installer lib OK"

@@ -77,6 +77,7 @@ install_from_env() {
   v=$(get AGENTOS_HOSTNAME);      [ -z "$v" ] || valid_hostname "$v"      || die "invalid AGENTOS_HOSTNAME"
   v=$(get AGENTOS_SSH_KEY);       [ -z "$v" ] || valid_ssh_pubkey "$v"    || die "invalid AGENTOS_SSH_KEY"
   v=$(get AGENTOS_PASSWORD_HASH); [ -z "$v" ] || valid_password_hash "$v" || die "AGENTOS_PASSWORD_HASH must be a \$6\$ or \$y\$ crypt hash (openssl passwd -6)"
+  [ "$(get AGENTOS_WEB_LAN)" != 1 ] || [ -n "$v" ] || die "AGENTOS_WEB_LAN=1 needs AGENTOS_PASSWORD_HASH: the LAN login is the password of agent"
   if [ -n "$(get AGENTOS_NET_ADDRESS)" ]; then
     valid_iface "$(get AGENTOS_NET_IFACE)" && valid_cidr "$(get AGENTOS_NET_ADDRESS)" &&
       valid_ipv4 "$(get AGENTOS_NET_GATEWAY)" || die "invalid static network settings (AGENTOS_NET_*)"
@@ -213,7 +214,7 @@ ask() {  # ask <title> <prompt> <default> <validator|-> : repeat until valid or 
 
 tui() {
   local env=/run/agentos-install.env disk name size model type why hidden="" items=() conf hn mode iface="" addr="" gw dns
-  local pw pw2 hash="" key gh ts lan k v cm parts apikeys=""
+  local pw pw2 hash="" key gh ts lan weblan=0 k v cm parts apikeys=""
   trap 'rm -f /run/agentos-install.env' EXIT  # = $env, holds secrets (literal: the trap may run after tui's locals are gone)
   trap 'exit 130' INT TERM HUP  # make an interrupted TUI run the EXIT trap
   # Offer only disks the engine would accept (same check_disk rules: not the stick, not in use, >= 32 GiB, unmounted).
@@ -251,6 +252,10 @@ tui() {
   ts=$(W --title Tailscale --passwordbox "Tailscale auth key (optional). Use a single-use, pre-approved key tagged tag:agentos." 10 72) || return 1
   lan=0
   [ -n "$ts" ] || ! W --title "SSH from LAN" --yesno "No Tailscale key. Allow SSH (key-only) from your local network?" 8 70 || lan=1
+  # LAN access logs in with the password above, so it is offered only when one is set.
+  if [ -n "$hash" ] && W --title "Web UI" --defaultno --yesno "Allow the web UI on your local network (password login)?\n\nIt is then at https://<this machine's address>, behind the password you set. Anyone on your network who knows it gets full control of this machine. Tailscale is safer." 13 72; then
+    weblan=1
+  fi
   cm=$(W --title Console --menu "Local console after install" 12 70 2 headless "Status + login prompt" terminal "Full-screen terminal after login") || return 1
   for k in ANTHROPIC_API_KEY OPENAI_API_KEY XAI_API_KEY CLAUDE_CODE_OAUTH_TOKEN; do
     v=$(W --title "API keys (optional)" --passwordbox "$k (empty = skip; can be set later with agentos-config)" 10 72) || return 1
@@ -258,11 +263,11 @@ tui() {
   done
   # The summary is the last question; nothing is written before it is confirmed. Show only whether a secret is set.
   local s_pw=${pw:+set} s_key=${key:+yes} s_ts=${ts:+yes}
-  W --title Summary --yesno "Disk:      $disk (ERASED)\nHostname:  ${hn:-default}\nNetwork:   $mode${iface:+ $iface $addr}\nPassword:  ${s_pw:-none}\nSSH key:   ${s_key:-no}${gh:+ + GitHub $gh}\nTailscale: ${s_ts:-no}\nLAN SSH:   $lan\n\nInstall now?" 18 72 || return 1
+  W --title Summary --yesno "Disk:      $disk (ERASED)\nHostname:  ${hn:-default}\nNetwork:   $mode${iface:+ $iface $addr}\nPassword:  ${s_pw:-none}\nSSH key:   ${s_key:-no}${gh:+ + GitHub $gh}\nTailscale: ${s_ts:-no}\nLAN SSH:   $lan\nWeb UI:    $(web_ui_summary "${ts:+1}" "$weblan")\n\nInstall now?" 20 76 || return 1
 
   (umask 077
    {
-     printf 'AGENTOS_INSTALL_DISK=%s\nAGENTOS_HOSTNAME=%s\nAGENTOS_CONSOLE=%s\nAGENTOS_LAN_SSH=%s\n' "$disk" "$hn" "$cm" "$lan"
+     printf 'AGENTOS_INSTALL_DISK=%s\nAGENTOS_HOSTNAME=%s\nAGENTOS_CONSOLE=%s\nAGENTOS_LAN_SSH=%s\nAGENTOS_WEB_LAN=%s\n' "$disk" "$hn" "$cm" "$lan" "$weblan"
      [ -z "$hash" ] || printf 'AGENTOS_PASSWORD_HASH=%s\n' "$hash"
      [ -z "$key" ] || printf 'AGENTOS_SSH_KEY=%s\n' "$key"
      [ -z "$gh" ] || printf 'AGENTOS_GITHUB_USER=%s\n' "$gh"

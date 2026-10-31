@@ -80,6 +80,7 @@ fi
 # (web-conf). A LAN change also changes the firewall (agentos-firewall reads web.conf) and needs a
 # restart of agentos-web. --no-block: agentos-web is ordered after this unit, so waiting would deadlock.
 web=$(/usr/local/lib/agentos/web-conf)
+agetty --reload 2>/dev/null || true   # login prompts already shown reprint the new lines
 [ "$web" != restart ] || /usr/local/sbin/agentos-firewall
 if grep -qx ENABLED=1 /etc/agentos/web.conf; then
   systemctl enable --quiet agentos-web.service

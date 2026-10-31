@@ -112,3 +112,12 @@ autoinstall_source() {
   fi
   echo none
 }
+
+# web_ui_summary <tailscale key: 1, else none> <LAN access 0|1>: the summary screen's "Web UI:" value.
+web_ui_summary() {
+  local t=""
+  [ "$1" != 1 ] || t="on the tailnet, once you allow your login (AGENTOS_WEB_USERS)"
+  if [ "$2" = 1 ]; then printf 'https://<LAN address> (password login)%s' "${t:+; also $t}"
+  elif [ -n "$t" ]; then printf '%s' "$t"
+  else printf 'off (turn it on later: sudo agentos-config)'; fi
+}
