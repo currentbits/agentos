@@ -159,7 +159,7 @@ lan_up()   { vm 'for _ in $(seq 1 30); do ss -Htln "sport = :7443" | grep -q . &
 
 check_web_lan_closed_when_off() {
   # Off (the default): no listener, nothing redirected, nothing answers on 443.
-  vm 'grep -qx LAN=0 /etc/agentos/web.conf && ! sudo nft list set inet agentos lan_web | grep -qw 443 &&
+  vm 'grep -qx LAN=0 /etc/agentos/web.conf && s=$(sudo nft list set inet agentos lan_web) && ! grep -qw 443 <<< "$s" &&
       ! ss -Htln "sport = :7443" | grep -q .' &&
   [ "$(lan_code -m 8 "https://$GIP/")" = 000 ]
 }
@@ -211,6 +211,9 @@ check_web_lan_login_end_to_end() {
     # curl's own %{http_code} is already "000" on a failed connection; no fallback needed (or wanted:
     # it would double up, right after curl's own unterminated "000", into "000000").
     [ "$(curl -sk -m 8 -o /dev/null -w '%{http_code}' "https://127.0.0.1:$HOSTPORT_7443/")" = 000 ] &&
+    # Also on the guest's own loopback: the old ruleset accepted lo before the 7443 guard, the same
+    # ordering flaw that let tailscale0 through, so this one fails on it while the LAN-side one can't.
+    [ "$(vm 'curl -sk -m 5 -o /dev/null -w "%{http_code}" https://127.0.0.1:7443/')" = 000 ] &&
     # Finding 1: a container's outbound HTTPS reaches the real internet, not this box's own LAN
     # listener (the redirect must not catch forwarded traffic, only traffic addressed to this box).
     vm 'docker rm -f ag-lan-curl >/dev/null 2>&1 || true
@@ -235,7 +238,7 @@ check_web_lan_login_end_to_end() {
     [ "$(lan_post -H "Cookie: $cookie" "https://$GIP/api/sessions/ag-lan/stop")" = 200 ] &&
     [ "$(lan_code -X DELETE -H "Cookie: $cookie" -H "Origin: https://$GIP" -H 'X-AgentOS: 1' "https://$GIP/api/sessions/ag-lan")" = 200 ] &&
     # The fingerprint the console, agentos-config and the System page show is the served certificate's.
-    fp=$(vm 'sudo agentos-config show-web-fingerprint') &&
+    fp=$(vm 'sudo agentos-config show-web-fingerprint') && [ -n "$fp" ] &&
     [ "$(openssl s_client -connect "127.0.0.1:$HOSTPORT_HTTPS" </dev/null 2>/dev/null | openssl x509 -noout -fingerprint -sha256 | sed 's/^[^=]*=//')" = "$fp" ] &&
     lan -H "Cookie: $cookie" "https://$GIP/api/system/lan" | grep -q "\"fingerprint\":\"$fp\"" &&
     vm "grep -qx 'Web UI: https://$GIP  (LAN login)' /run/issue.d/50-agentos-web.issue &&

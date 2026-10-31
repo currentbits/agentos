@@ -33,6 +33,9 @@ yesterday=$(( $(date +%s) / 86400 - 1 ))
 tomorrow=$(( $(date +%s) / 86400 + 1 ))
 printf 'agent:%s:20000:0:99999:7::%s:\n' "$y" "$yesterday" > "$AGENTOS_SHADOW"
 [ "$(printf '%s\n' "$PW" | rc)" = 2 ]
+today=$(( $(date +%s) / 86400 ))
+printf 'agent:%s:20000:0:99999:7::%s:\n' "$y" "$today" > "$AGENTOS_SHADOW"
+[ "$(printf '%s\n' "$PW" | rc)" = 2 ]   # expires today: refused, like pam_unix
 printf 'agent:%s:20000:0:99999:7::%s:\n' "$y" "$tomorrow" > "$AGENTOS_SHADOW"
 [ "$(printf '%s\n' "$PW" | rc)" = 0 ]
 # Never takes the password in argv: any argument is refused before stdin is read.
