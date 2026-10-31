@@ -176,12 +176,20 @@ check_web_lan_firewall_order() {
       [ "$dnat" -lt "$ts" ] && [ "$dnat" -lt "$lo" ] && [ "$drop" -lt "$ts" ] && [ "$drop" -lt "$lo" ]'
 }
 check_web_lan_refused_without_password() {
-  # No password for agent (the smoke image has none): apply says so, and LAN access stays off.
+  # Without a usable password for agent, apply says so and LAN access stays off. Works on both the
+  # smoke image (no password) and an installer-written disk (has one): lock it for the check and
+  # restore the exact saved hash after (as check_autologin_when_no_access does). An empty saved
+  # hash would make the restore leave a passwordless account: fail before changing anything.
   local rc=0
-  vm 'test "$(sudo passwd -S agent | cut -d" " -f2)" != P && sudo agentos-config set AGENTOS_WEB_LAN 1 &&
-      { out=$(sudo agentos-config apply 2>&1); test $? = 3; } &&
-      echo "$out" | grep -q "set a password for agent first (sudo agentos-config password)" &&
-      grep -qx LAN=0 /etc/agentos/web.conf && ! ss -Htln "sport = :7443" | grep -q .' || rc=1
+  vm 'h=$(sudo getent shadow agent | cut -d: -f2); [ -n "$h" ] || exit 1
+      sudo usermod -p "!" agent; r=0
+      { sudo agentos-config set AGENTOS_WEB_LAN 1 &&
+        { out=$(sudo agentos-config apply 2>&1); test $? = 3; } &&
+        echo "$out" | grep -q "set a password for agent first (sudo agentos-config password)" &&
+        grep -qx LAN=0 /etc/agentos/web.conf && ! ss -Htln "sport = :7443" | grep -q .; } || r=1
+      sudo usermod -p "$h" agent
+      test "$(sudo getent shadow agent | cut -d: -f2)" = "$h" || r=1
+      exit $r' || rc=1
   vm 'sudo agentos-config set AGENTOS_WEB_LAN 0 && sudo agentos-config apply' || rc=1
   return "$rc"
 }
