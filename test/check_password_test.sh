@@ -27,6 +27,14 @@ done
 for h in '!' '*' "!$y" ''; do shadow "$h"; [ "$(printf '%s\n' "$PW" | rc)" = 2 ]; [ "$(printf '\n' | rc)" = 2 ]; done
 printf 'root:*:20000::::::\n' > "$AGENTOS_SHADOW"; [ "$(printf '%s\n' "$PW" | rc)" = 2 ]
 [ "$(printf '%s\n' "$PW" | AGENTOS_SHADOW=$d/missing rc)" = 2 ]
+# An expired account (shadow field 8, in the past): refused even with the right password. A future
+# expiry, or none at all, is fine.
+yesterday=$(( $(date +%s) / 86400 - 1 ))
+tomorrow=$(( $(date +%s) / 86400 + 1 ))
+printf 'agent:%s:20000:0:99999:7::%s:\n' "$y" "$yesterday" > "$AGENTOS_SHADOW"
+[ "$(printf '%s\n' "$PW" | rc)" = 2 ]
+printf 'agent:%s:20000:0:99999:7::%s:\n' "$y" "$tomorrow" > "$AGENTOS_SHADOW"
+[ "$(printf '%s\n' "$PW" | rc)" = 0 ]
 # Never takes the password in argv: any argument is refused before stdin is read.
 shadow "$y"; [ "$(printf '%s\n' "$PW" | rc "$PW")" = 64 ]
 # Prints nothing, on any outcome.
