@@ -133,6 +133,7 @@ sudo agentos-config add-ssh-key 'ssh-ed25519 AAAA… you@laptop'
 sudo agentos-config github-keys <github-user>   # import your GitHub SSH keys
 sudo agentos-config password           # console/sudo password for 'agent'
 sudo agentos-config solenta            # Solenta pairing info
+sudo agentos-config show-web-fingerprint   # the LAN certificate's SHA-256 (AGENTOS_WEB_LAN=1)
 ```
 
 The **local console** shows a status screen with the hostname, the Tailscale address, the web UI URL, update notices and a login prompt. Set `AGENTOS_CONSOLE=terminal` to get a full-screen terminal after login instead.
@@ -158,6 +159,23 @@ The box can't initiate connections to your other tailnet devices, so a hijacked 
 - **SSH:** `ssh agent@<box>` over Tailscale, with Tailscale SSH or your key. Password SSH is off. Set `AGENTOS_LAN_SSH=1` to also accept key-only SSH on the LAN.
 - **User:** everything runs as **`agent`**, which has passwordless sudo and is in the `docker` group.
 
+### Without Tailscale: the web UI on your local network
+
+On a trusted home or lab network you can also open the web UI at **`https://<the box's LAN address>`**, logging in with the password of `agent`. It is off by default. Turn it on in the installer, in the web UI's Settings page, in `sudo agentos-config` ("Web UI on the local network"), or with:
+
+```bash
+sudo agentos-config password                    # if agent has no password yet
+sudo agentos-config set AGENTOS_WEB_LAN 1 && sudo agentos-config apply
+```
+
+The box makes its own certificate, so your browser warns about it the first time. Continue only if the certificate's SHA-256 fingerprint matches the one on the box's console, in `sudo agentos-config show-web-fingerprint`, or on the web UI's System page. The certificate lasts 825 days, and the box makes a new one (with a new fingerprint) a month before it expires, or after you delete `/etc/agentos/web-lan/`.
+
+- `https://<hostname>` and `https://<hostname>.local` work too, where your network resolves those names.
+- A session ends after 12 hours without use, after 7 days, on **Log out**, when the web UI restarts (an update, or an `agentos-config apply` that changes LAN access), and when `agent`'s password changes (`sudo agentos-config password`, or the same from the menu) — each of those logs everyone out.
+- After 5 wrong passwords from one address, or 30 from anywhere, within 10 minutes, logins are refused until the 10 minutes have passed. This is by design: it's also the lockout a distributed guesser hits, and the way back in during it is the console or Tailscale, not another LAN login attempt. Every login, failed login and logout is in the audit log (`journalctl -t agentos-web`), as `agent@lan(<address>)`.
+- Without a password for `agent`, LAN access stays off, and `apply` says so.
+- Tailscale keeps working as before, alongside it.
+
 ## The web UI
 
 Open **`https://<box>.<tailnet>.ts.net`** after allowing your tailnet login:
@@ -176,7 +194,7 @@ sudo agentos-config set AGENTOS_WEB_USERS you@example.com && sudo agentos-config
 | **Settings** | Every setting in `agentos.env`, API keys (write-only), SSH keys, and the Solenta card. |
 | **System** | Services, journal, Tailscale, power, and the **update card**: installed and available versions, Check now, Update with a live log, and rollback via the CLI. |
 
-The footer shows the installed AgentOS version. Access requires a Tailscale identity in `AGENTOS_WEB_USERS`. Requests from tagged devices carry no identity, so they are always refused. Every change goes through CSRF checks and is written to an audit log.
+The footer shows the installed AgentOS version. Access requires a Tailscale identity in `AGENTOS_WEB_USERS`, or, with LAN access on, the password of `agent` (see [Without Tailscale](#without-tailscale-the-web-ui-on-your-local-network)). Requests from tagged devices carry no identity, so they are always refused. Every change goes through CSRF checks and is written to an audit log.
 
 ## Agents
 
@@ -297,7 +315,8 @@ Boxes trust this key only for this repo (`Signed-By`). An unsigned or wrongly si
 
 ## Security model
 
-- **The network is closed by default.** SSH is reachable only over Tailscale unless you set `AGENTOS_LAN_SSH=1`, and password SSH is off. The web UI, noVNC and VNC listen on loopback only and are published only through `tailscale serve`. The tailnet ACL above stops the box from reaching your other devices.
+- **The network is closed by default.** SSH is reachable only over Tailscale unless you set `AGENTOS_LAN_SSH=1`, and password SSH is off. The web UI, noVNC and VNC listen on loopback only and are published only through `tailscale serve`, unless you set `AGENTOS_WEB_LAN=1`. The tailnet ACL above stops the box from reaching your other devices.
+- **LAN access to the web UI is root-equivalent access for anyone who can reach the box's LAN address and knows the `agent` password.** Use it only on a network you trust (home, lab), with a strong password, and prefer Tailscale for anything else. It is HTTPS only (no port 80); the password is checked by a root helper that reads it on stdin, so it never appears in a command line, a log or the audit trail. Sessions live only in the web server's memory, and logins are rate-limited. noVNC, MCP HTTP and SSH are not opened by it.
 - **Secrets** are kept in `~agent/.config/agentos/secrets.env` (mode 0600). That file is parsed, never sourced. The web UI treats them as write-only, and they never appear in logs or `sudo` command lines.
 - **Agents are trusted with the machine.** `agent` has passwordless sudo. Run AgentOS on a machine dedicated to agents, with spend-capped keys, and don't use it for anything else you care about.
 - **Updates** are signed with a key that exists only in the release job (an Actions secret, used only for `v*` tags) and in an offline backup. Release notes are treated as untrusted text everywhere they're shown.
@@ -318,6 +337,7 @@ All settings go in `/etc/agentos/agentos.env`. Set them with `sudo agentos-confi
 | `AGENTOS_CONSOLE` | `headless` | `headless` (status screen and login) or `terminal`. |
 | `AGENTOS_WEB` | `1` | Publish the web UI on the tailnet. |
 | `AGENTOS_WEB_USERS` | — | Comma-separated tailnet logins allowed into the web UI. Empty means nobody. |
+| `AGENTOS_WEB_LAN` | `0` | `1` = also serve the web UI at `https://<LAN address>`, with the password of `agent`. |
 | `AGENTOS_MAX_DESKTOPS` | `8` | Maximum concurrent desktops (1–16). |
 | `AGENTOS_SCREENSHOT_WIDTH` | `1366` | Screenshot width sent to agents (640–1920). |
 | `AGENTOS_DESKTOP_IDLE_MINUTES` | `120` | Reap idle desktops after this many minutes (`0` = never). |

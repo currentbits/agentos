@@ -1,5 +1,6 @@
 # shellcheck shell=bash
 # shellcheck disable=SC2016 # vm bodies are single-quoted on purpose: $vars expand on the guest.
+# shellcheck disable=SC2154 # HOSTPORT_HTTPS, HOSTPORT_7443 come from smoke.sh
 check_web_service_loopback_only() {
   # Type=simple reports "active" the instant systemd forks node, before fastify finishes loading
   # and calls listen(); measured ~300-400ms on devvm. The preceding check_web_disable_and_enable
@@ -142,4 +143,117 @@ check_web_audit_line() {
 check_web_e2e() {
   web_users && vm 'cat > /tmp/web_e2e.mjs' < "$HERE/web_e2e.mjs" &&
   vm 'LOGIN=smoke@example.com PLAYWRIGHT=$HOME/.local/lib/node_modules/playwright node /tmp/web_e2e.mjs'
+}
+
+# LAN access (AGENTOS_WEB_LAN), from the host: QEMU forwards $HOSTPORT_HTTPS to the guest's 443, and
+# --connect-to keeps the guest's own address in the URL, so Host and Origin are what a LAN browser
+# sends. The guest sees these connections come from 10.0.2.2. $HOSTPORT_7443 forwards straight to
+# the guest's 7443, bypassing the redirect: a "LAN client" that skips port 443 (finding 2).
+GIP=10.0.2.15   # the guest's address on QEMU's user network
+LANPW='smoke LAN pw 7'
+LANPW2='smoke LAN pw 8'   # a password change (finding 5): must differ from LANPW
+lan()      { curl -sk -m 15 --connect-to "$GIP:443:127.0.0.1:$HOSTPORT_HTTPS" "$@"; }
+lan_code() { lan -o /dev/null -w '%{http_code}' "$@"; }
+lan_post() { lan_code -X POST -H "Origin: https://$GIP" -H 'X-AgentOS: 1' -H 'Content-Type: application/json' "$@"; }
+lan_up()   { vm 'for _ in $(seq 1 30); do ss -Htln "sport = :7443" | grep -q . && exit 0; sleep 1; done; exit 1'; }
+
+check_web_lan_closed_when_off() {
+  # Off (the default): no listener, nothing redirected, nothing answers on 443.
+  vm 'grep -qx LAN=0 /etc/agentos/web.conf && ! sudo nft list set inet agentos lan_web | grep -qw 443 &&
+      ! ss -Htln "sport = :7443" | grep -q .' &&
+  [ "$(lan_code -m 8 "https://$GIP/")" = 000 ]
+}
+check_web_lan_firewall_order() {
+  # Finding 2: 7443 is reachable only as redirected from 443 (ct status dnat); that guard and the
+  # explicit drop beneath it must come before the tailscale0 and lo accepts, or either would let a
+  # direct (non-redirected) connection to 7443 through, including from a tailnet peer.
+  vm 'r=$(sudo nft -a list chain inet agentos input) &&
+      dnat=$(grep -n "tcp dport 7443 ct status dnat accept" <<< "$r" | cut -d: -f1) &&
+      drop=$(grep -n "tcp dport 7443 drop" <<< "$r" | cut -d: -f1) &&
+      ts=$(grep -n "iifname \"tailscale0\" accept" <<< "$r" | cut -d: -f1) &&
+      lo=$(grep -n "iif lo accept" <<< "$r" | cut -d: -f1) &&
+      [ -n "$dnat" ] && [ -n "$drop" ] && [ -n "$ts" ] && [ -n "$lo" ] &&
+      [ "$dnat" -lt "$ts" ] && [ "$dnat" -lt "$lo" ] && [ "$drop" -lt "$ts" ] && [ "$drop" -lt "$lo" ]'
+}
+check_web_lan_refused_without_password() {
+  # No password for agent (the smoke image has none): apply says so, and LAN access stays off.
+  local rc=0
+  vm 'test "$(sudo passwd -S agent | cut -d" " -f2)" != P && sudo agentos-config set AGENTOS_WEB_LAN 1 &&
+      { out=$(sudo agentos-config apply 2>&1); test $? = 3; } &&
+      echo "$out" | grep -q "set a password for agent first (sudo agentos-config password)" &&
+      grep -qx LAN=0 /etc/agentos/web.conf && ! ss -Htln "sport = :7443" | grep -q .' || rc=1
+  vm 'sudo agentos-config set AGENTOS_WEB_LAN 0 && sudo agentos-config apply' || rc=1
+  return "$rc"
+}
+check_web_lan_login_end_to_end() {
+  local rc=0 orig hdr cookie fp
+  orig=$(vm 'sudo getent shadow agent | cut -d: -f2') || return 1
+  # chpasswd: yescrypt, as `passwd` and `agentos-config password` write it.
+  vm 'sudo chpasswd' <<< "agent:$LANPW" &&
+  vm 'sudo agentos-config set AGENTOS_WEB_LAN 1 && sudo agentos-config apply && grep -qx LAN=1 /etc/agentos/web.conf' && lan_up || rc=1
+  if [ "$rc" = 0 ]; then
+    # Unauthenticated: the login page for a page, 401 for the API; a foreign Host is refused.
+    lan "https://$GIP/" | grep -q 'Password of <code>agent</code>' &&
+    [ "$(lan_code "https://$GIP/api/me")" = 401 ] &&
+    [ "$(lan_code -H 'Host: evil.example' "https://$GIP/")" = 403 ] &&
+    # 5 wrong passwords get 401, the 6th attempt 429, even with the right password.
+    [ "$(lan_post -d '{"password":"wrong1"}' "https://$GIP/api/lan/login")" = 401 ] &&
+    [ "$(lan_post -d '{"password":"wrong2"}' "https://$GIP/api/lan/login")" = 401 ] &&
+    [ "$(lan_post -d '{"password":"wrong3"}' "https://$GIP/api/lan/login")" = 401 ] &&
+    [ "$(lan_post -d '{"password":"wrong4"}' "https://$GIP/api/lan/login")" = 401 ] &&
+    [ "$(lan_post -d '{"password":"wrong5"}' "https://$GIP/api/lan/login")" = 401 ] &&
+    [ "$(lan_post -d "{\"password\":\"$LANPW\"}" "https://$GIP/api/lan/login")" = 429 ] &&
+    # Finding 2: 7443 directly, not through 443, is refused (the redirect's ct-status-dnat guard).
+    [ "$(curl -sk -m 8 -o /dev/null -w '%{http_code}' "https://127.0.0.1:$HOSTPORT_7443/" 2>/dev/null || echo 000)" = 000 ] &&
+    # Finding 1: a container's outbound HTTPS reaches the real internet, not this box's own LAN
+    # listener (the redirect must not catch forwarded traffic, only traffic addressed to this box).
+    vm 'docker rm -f ag-lan-curl >/dev/null 2>&1 || true
+        docker run --rm --name ag-lan-curl curlimages/curl -sSI -m 15 https://example.com | head -1 | grep -q "^HTTP/"' || rc=1
+    # A restart forgets the failures (and every session), as documented.
+    vm 'sudo systemctl restart agentos-web.service' && lan_up || rc=1
+    hdr=$(lan -D - -o /dev/null -X POST -H "Origin: https://$GIP" -H 'X-AgentOS: 1' -H 'Content-Type: application/json' \
+            -d "{\"password\":\"$LANPW\"}" "https://$GIP/api/lan/login") || rc=1
+    cookie=$(printf '%s' "$hdr" | tr -d '\r' | sed -n 's/^set-cookie: \(__Host-agentos-session=[A-Za-z0-9_-]\{43\}\); Secure; HttpOnly; SameSite=Strict; Path=\/$/\1/ip')
+    [ -n "$cookie" ] &&
+    lan -H "Cookie: $cookie" "https://$GIP/api/me" | grep -q '"login":"agent@lan(10.0.2.2)".*"lan":true' &&
+    # CSRF: an unsafe action needs X-AgentOS (and the Origin), then works.
+    [ "$(lan_code -X POST -H "Cookie: $cookie" -H "Origin: https://$GIP" -H 'Content-Type: application/json' \
+          -d '{"cli":"shell","name":"lan"}' "https://$GIP/api/sessions")" = 403 ] &&
+    [ "$(lan_post -H "Cookie: $cookie" -d '{"cli":"shell","name":"lan"}' "https://$GIP/api/sessions")" = 200 ] &&
+    # The terminal WebSocket, through the real 443 redirect (direct, unredirected 7443 is refused
+    # by design: finding 2). This runs here, not on the guest, so it can dial the forwarded port
+    # while still sending the guest's own address as Host/Origin.
+    WS_COOKIE="$cookie" WS_HOST="$GIP" WS_CONNECT="127.0.0.1:$HOSTPORT_HTTPS" WS_MODULE_BASE="$HERE/../web/server/" \
+      node "$HERE/web_ws.mjs" term ag-lan "echo lan-\$((40+2))" lan-42 &&
+    [ "$(lan_post -H "Cookie: $cookie" "https://$GIP/api/sessions/ag-lan/stop")" = 200 ] &&
+    [ "$(lan_code -X DELETE -H "Cookie: $cookie" -H "Origin: https://$GIP" -H 'X-AgentOS: 1' "https://$GIP/api/sessions/ag-lan")" = 200 ] &&
+    # The fingerprint the console, agentos-config and the System page show is the served certificate's.
+    fp=$(vm 'sudo agentos-config show-web-fingerprint') &&
+    [ "$(openssl s_client -connect "127.0.0.1:$HOSTPORT_HTTPS" </dev/null 2>/dev/null | openssl x509 -noout -fingerprint -sha256 | sed 's/^[^=]*=//')" = "$fp" ] &&
+    lan -H "Cookie: $cookie" "https://$GIP/api/system/lan" | grep -q "\"fingerprint\":\"$fp\"" &&
+    vm "grep -qx 'Web UI: https://$GIP  (LAN login)' /run/issue.d/50-agentos-web.issue &&
+        grep -qx 'LAN certificate SHA-256: ${fp:0:47}' /run/issue.d/50-agentos-web.issue" &&
+    # Logout ends the session; the audit log has every step and never the password.
+    [ "$(lan_post -H "Cookie: $cookie" "https://$GIP/api/lan/logout")" = 200 ] &&
+    [ "$(lan_code -H "Cookie: $cookie" "https://$GIP/api/me")" = 401 ] &&
+    vm 'j=$(sudo journalctl -b -t agentos-web -p notice --no-pager -o cat) &&
+        for l in "agent@lan(10.0.2.2) login-failed -" "agent@lan(10.0.2.2) login -" "agent@lan(10.0.2.2) logout -"; do
+          echo "$j" | grep -qxF "$l" || { echo "no audit line: $l"; exit 1; }
+        done' &&
+    ! vm "sudo journalctl -b --no-pager | grep -qF '$LANPW'" || rc=1
+    # Finding 5: changing agent's password drops any live LAN session (a restart).
+    hdr2=$(lan -D - -o /dev/null -X POST -H "Origin: https://$GIP" -H 'X-AgentOS: 1' -H 'Content-Type: application/json' \
+             -d "{\"password\":\"$LANPW\"}" "https://$GIP/api/lan/login") &&
+    cookie2=$(printf '%s' "$hdr2" | tr -d '\r' | sed -n 's/^set-cookie: \(__Host-agentos-session=[A-Za-z0-9_-]\{43\}\); Secure; HttpOnly; SameSite=Strict; Path=\/$/\1/ip') &&
+    [ -n "$cookie2" ] &&
+    [ "$(lan_code -H "Cookie: $cookie2" "https://$GIP/api/me")" = 200 ] &&
+    vm "printf '%s\n%s\n' '$LANPW2' '$LANPW2' | sudo agentos-config password" &&
+    lan_up &&
+    [ "$(lan_code -H "Cookie: $cookie2" "https://$GIP/api/me")" = 401 ] || rc=1
+  fi
+  # Off again: the password goes back to what it was, and 443 is closed.
+  vm 'sudo agentos-config set AGENTOS_WEB_LAN 0 && sudo agentos-config apply && grep -qx LAN=0 /etc/agentos/web.conf' || rc=1
+  vm "sudo usermod -p '$orig' agent" || rc=1
+  [ "$(lan_code -m 8 "https://$GIP/")" = 000 ] || rc=1
+  return "$rc"
 }
