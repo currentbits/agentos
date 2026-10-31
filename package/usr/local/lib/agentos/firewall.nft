@@ -5,6 +5,7 @@ delete table inet agentos
 table inet agentos {
   set public_tcp { type inet_service; }
   set lan_web { type inet_service; }      # 443 while AGENTOS_WEB_LAN=1 (agentos-firewall)
+  set lan_http { type inet_service; }     # 80 likewise: redirected to 7480, which only answers "go to https"
 
   # The web UI's LAN listener is 0.0.0.0/[::]:7443 (agentos-web, as agent): LAN connections to 443
   # are redirected to it. Not a listener on 443 itself: tailscaled binds <tailnet-ip>:443 for
@@ -15,6 +16,7 @@ table inet agentos {
   chain prerouting {
     type nat hook prerouting priority dstnat; policy accept;
     iifname != "tailscale0" fib daddr type local tcp dport @lan_web redirect to :7443
+    iifname != "tailscale0" fib daddr type local tcp dport @lan_http redirect to :7480
   }
 
   chain input {
@@ -24,8 +26,8 @@ table inet agentos {
     # 7443 only as redirected from 443 above, on every interface including tailscale0: without
     # this, ahead of the tailscale0 and lo accepts below, a tailnet peer could reach 7443 directly,
     # giving tailnet users who aren't in AGENTOS_WEB_USERS the LAN password login.
-    tcp dport 7443 ct status dnat accept
-    tcp dport 7443 drop
+    tcp dport { 7443, 7480 } ct status dnat accept
+    tcp dport { 7443, 7480 } drop
     iif lo accept
     iifname "tailscale0" accept
     meta l4proto { icmp, ipv6-icmp } accept

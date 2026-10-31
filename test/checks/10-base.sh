@@ -6,6 +6,8 @@ check_boot_mode_matches() {
 }
 check_agent_user()        { vm 'test "$(id -u)" = 1000 && id -nG | grep -qw sudo'; }
 check_passwordless_sudo() { vm 'sudo -n true'; }
+# agetty execs /bin/login: without it (trixie no longer pulls in `login`) no console login works.
+check_console_login_program() { vm 'test -x /bin/login && test -f /etc/pam.d/login'; }
 check_password_ssh_refused() {
   ! ssh -p "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes \
       -o PreferredAuthentications=password -o PubkeyAuthentication=no agent@127.0.0.1 true 2>/dev/null

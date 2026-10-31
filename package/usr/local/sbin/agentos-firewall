@@ -10,4 +10,5 @@ fi
 # not agentos.env: LAN=1 only once web-conf found a password and made the certificate.
 if grep -qx LAN=1 /etc/agentos/web.conf 2>/dev/null; then
   nft add element inet agentos lan_web '{ 443 }'
+  nft add element inet agentos lan_http '{ 80 }'
 fi

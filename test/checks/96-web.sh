@@ -155,21 +155,24 @@ LANPW2='smoke LAN pw 8'   # a password change (finding 5): must differ from LANP
 lan()      { curl -sk -m 15 --connect-to "$GIP:443:127.0.0.1:$HOSTPORT_HTTPS" "$@"; }
 lan_code() { lan -o /dev/null -w '%{http_code}' "$@"; }
 lan_post() { lan_code -X POST -H "Origin: https://$GIP" -H 'X-AgentOS: 1' -H 'Content-Type: application/json' "$@"; }
+# Plain http:// to the guest's port 80: "<code> <Location>".
+lan_http() { curl -s -m 8 --connect-to "$GIP:80:127.0.0.1:$HOSTPORT_80" -o /dev/null -w '%{http_code} %{redirect_url}' "$@"; }
 lan_up()   { vm 'for _ in $(seq 1 30); do ss -Htln "sport = :7443" | grep -q . && exit 0; sleep 1; done; exit 1'; }
 
 check_web_lan_closed_when_off() {
   # Off (the default): no listener, nothing redirected, nothing answers on 443.
   vm 'grep -qx LAN=0 /etc/agentos/web.conf && s=$(sudo nft list set inet agentos lan_web) && ! grep -qw 443 <<< "$s" &&
-      ! ss -Htln "sport = :7443" | grep -q .' &&
-  [ "$(lan_code -m 8 "https://$GIP/")" = 000 ]
+      s=$(sudo nft list set inet agentos lan_http) && ! grep -qw 80 <<< "$s" &&
+      ! ss -Htln "sport = :7443" | grep -q . && ! ss -Htln "sport = :7480" | grep -q .' &&
+  [ "$(lan_code -m 8 "https://$GIP/")" = 000 ] && [ "$(lan_http "http://$GIP/")" = "000 " ]
 }
 check_web_lan_firewall_order() {
   # Finding 2: 7443 is reachable only as redirected from 443 (ct status dnat); that guard and the
   # explicit drop beneath it must come before the tailscale0 and lo accepts, or either would let a
   # direct (non-redirected) connection to 7443 through, including from a tailnet peer.
   vm 'r=$(sudo nft list chain inet agentos input) &&
-      dnat=$(grep -n "tcp dport 7443 ct status dnat accept" <<< "$r" | cut -d: -f1) &&
-      drop=$(grep -n "tcp dport 7443 drop" <<< "$r" | cut -d: -f1) &&
+      dnat=$(grep -n "tcp dport { 7443, 7480 } ct status dnat accept" <<< "$r" | cut -d: -f1) &&
+      drop=$(grep -n "tcp dport { 7443, 7480 } drop" <<< "$r" | cut -d: -f1) &&
       ts=$(grep -n "iifname \"tailscale0\" accept" <<< "$r" | cut -d: -f1) &&
       lo=$(grep -n "iif \"lo\" accept" <<< "$r" | cut -d: -f1) &&
       [ -n "$dnat" ] && [ -n "$drop" ] && [ -n "$ts" ] && [ -n "$lo" ] &&
@@ -206,6 +209,9 @@ check_web_lan_login_end_to_end() {
     {
     # Unauthenticated: the login page for a page, 401 for the API; a foreign Host is refused.
     lan "https://$GIP/" | grep -q 'Password of <code>agent</code>' &&
+    # A bare IP typed into a browser is http:// on port 80: sent on to https, and only for this box.
+    [ "$(lan_http "http://$GIP/")" = "301 https://$GIP/" ] &&
+    [ "$(lan_http -H 'Host: evil.example' "http://$GIP/")" = "400 " ] &&
     [ "$(lan_code "https://$GIP/api/me")" = 401 ] &&
     [ "$(lan_code -H 'Host: evil.example' "https://$GIP/")" = 403 ] &&
     # 5 wrong passwords get 401, the 6th attempt 429, even with the right password.
@@ -224,7 +230,9 @@ check_web_lan_login_end_to_end() {
     [ "$(vm 'curl -sk -m 5 -o /dev/null -w "%{http_code}" https://127.0.0.1:7443/')" = 000 ] &&
     # Finding 1: a container's outbound HTTPS reaches the real internet, not this box's own LAN
     # listener (the redirect must not catch forwarded traffic, only traffic addressed to this box).
+    # The pull retries: the test network's DNS is now and then briefly "server misbehaving".
     vm 'docker rm -f ag-lan-curl >/dev/null 2>&1 || true
+        for _ in 1 2 3 4 5; do docker pull -q curlimages/curl >/dev/null && break; sleep 5; done
         docker run --rm --name ag-lan-curl curlimages/curl -sSI -m 15 https://example.com | head -1 | grep -q "^HTTP/"' &&
     # A restart forgets the failures (and every session), as documented.
     vm 'sudo systemctl restart agentos-web.service' && lan_up || rc=1

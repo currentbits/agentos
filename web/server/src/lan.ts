@@ -9,6 +9,7 @@ import type { Deps } from './app.js';
 import { one, type Verdict } from './auth.js';
 
 export const LAN_PORT = 7443;
+export const LAN_HTTP_PORT = 7480;
 export const LAN_DIR = '/etc/agentos/web-lan';
 export const COOKIE = '__Host-agentos-session';
 export const IDLE_MS = 12 * 3600_000;
@@ -47,6 +48,13 @@ export function lanHostAllowed(host: string | undefined, name: string, addrs: st
   const h = normalizeHost(host);
   const n = name.toLowerCase();
   return h === n || h === `${n}.local` || addrs.some((a) => h === (a.includes(':') ? `[${a.toLowerCase()}]` : a));
+}
+
+// Plain HTTP (port 80, redirected to LAN_HTTP_PORT): a bare IP typed into a browser goes to http://
+// first. Only a Host naming this box gets sent on to https, so this is no open redirect.
+export function httpsRedirect(host: string | undefined, name: string, addrs: string[]): string | null {
+  const h = host?.toLowerCase().replace(/:80$/, '');
+  return h && lanHostAllowed(h, name, addrs) ? `https://${h}/` : null;
 }
 
 const digest = (token: string) => createHash('sha256').update(token).digest('hex');

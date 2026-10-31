@@ -170,10 +170,10 @@ sudo agentos-config set AGENTOS_WEB_LAN 1 && sudo agentos-config apply
 
 The box makes its own certificate, so your browser warns about it the first time. Continue only if the certificate's SHA-256 fingerprint matches the one on the box's console, in `sudo agentos-config show-web-fingerprint`, or on the web UI's System page. The certificate lasts 825 days, and the box makes a new one (with a new fingerprint) a month before it expires, or after you delete `/etc/agentos/web-lan/`.
 
-- `https://<hostname>` and `https://<hostname>.local` work too, where your network resolves those names.
+- `https://<hostname>` and `https://<hostname>.local` work too, where your network resolves those names. Plain `http://` (port 80) only redirects to the `https://` address.
 - A session ends after 12 hours without use, after 7 days, on **Log out**, when the web UI restarts (an update, or an `agentos-config apply` that changes LAN access), and when `agent`'s password is changed with `sudo agentos-config password` (or the same from the menu) — each of those logs everyone out. A password changed some other way (`sudo passwd agent`) doesn't end existing sessions: run `sudo systemctl restart agentos-web` after it.
 - After 5 wrong passwords from one address (one /64 for IPv6), or 30 from anywhere, within 10 minutes, logins are refused until the 10 minutes have passed. This is by design: it's also the lockout a distributed guesser hits, and the way back in during it is the console or Tailscale, not another LAN login attempt. Every login, failed login and logout is in the audit log (`journalctl -t agentos-web`), as `agent@lan(<address>)`.
-- With LAN access on, don't publish a Docker container on host port 443: Docker's own port forwarding and the LAN redirect would compete for it.
+- With LAN access on, don't publish a Docker container on host port 443 or 80: Docker's own port forwarding and the LAN redirect would compete for it.
 - Without a password for `agent`, LAN access stays off, and `apply` says so.
 - Tailscale keeps working as before, alongside it.
 
@@ -317,7 +317,7 @@ Boxes trust this key only for this repo (`Signed-By`). An unsigned or wrongly si
 ## Security model
 
 - **The network is closed by default.** SSH is reachable only over Tailscale unless you set `AGENTOS_LAN_SSH=1`, and password SSH is off. The web UI, noVNC and VNC listen on loopback only and are published only through `tailscale serve`, unless you set `AGENTOS_WEB_LAN=1`. The tailnet ACL above stops the box from reaching your other devices.
-- **LAN access to the web UI is root-equivalent access for anyone who can reach the box's LAN address and knows the `agent` password.** Use it only on a network you trust (home, lab), with a strong password, and prefer Tailscale for anything else. It is HTTPS only (no port 80); the password is checked by a root helper that reads it on stdin, so it never appears in a command line, a log or the audit trail. Sessions live only in the web server's memory, and logins are rate-limited. noVNC, MCP HTTP and SSH are not opened by it.
+- **LAN access to the web UI is root-equivalent access for anyone who can reach the box's LAN address and knows the `agent` password.** Use it only on a network you trust (home, lab), with a strong password, and prefer Tailscale for anything else. It is HTTPS only (port 80 answers with nothing but a redirect to HTTPS); the password is checked by a root helper that reads it on stdin, so it never appears in a command line, a log or the audit trail. Sessions live only in the web server's memory, and logins are rate-limited. noVNC, MCP HTTP and SSH are not opened by it.
 - **Secrets** are kept in `~agent/.config/agentos/secrets.env` (mode 0600). That file is parsed, never sourced. The web UI treats them as write-only, and they never appear in logs or `sudo` command lines.
 - **Agents are trusted with the machine.** `agent` has passwordless sudo. Run AgentOS on a machine dedicated to agents, with spend-capped keys, and don't use it for anything else you care about.
 - **Updates** are signed with a key that exists only in the release job (an Actions secret, used only for `v*` tags) and in an offline backup. Release notes are treated as untrusted text everywhere they're shown.

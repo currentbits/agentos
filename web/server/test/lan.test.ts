@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { CHECK_PASSWORD } from '../src/actions.js';
 import { parseWebConf } from '../src/auth.js';
-import { ABSOLUTE_MS, IDLE_MS, LanState, LOGIN_PAGE, lanHostAllowed, rateKey, sessionToken, WINDOW_MS, type LanOpts } from '../src/lan.js';
+import { ABSOLUTE_MS, httpsRedirect, IDLE_MS, LanState, LOGIN_PAGE, lanHostAllowed, rateKey, sessionToken, WINDOW_MS, type LanOpts } from '../src/lan.js';
 import { fakeDeps, H, LOGIN } from './helpers.js';
 
 const PW = 'correct horse battery';
@@ -40,6 +40,14 @@ describe('Host allowlist', () => {
   it('rejects a rebinding name, another port, an unknown address and a bare IPv6 literal', () => {
     for (const h of [undefined, '', 'evil.example', 'box.evil.example', 'evil.example:443', '192.168.1.50:8443', '192.168.1.51', '2001:db8::5', '[2001:db8::6]', 'box.local.']) {
       expect(lanHostAllowed(h, NAME, ADDRS)).toBe(false);
+    }
+  });
+  it('http:// on port 80 is sent to https only for a Host naming this box', () => {
+    expect(httpsRedirect('192.168.1.50', NAME, ADDRS)).toBe('https://192.168.1.50/');
+    expect(httpsRedirect('Box.local:80', NAME, ADDRS)).toBe('https://box.local/');
+    expect(httpsRedirect('[fe80::1]:80', NAME, ADDRS)).toBe('https://[fe80::1]/');
+    for (const h of [undefined, '', 'evil.example', 'evil.example:80', '192.168.1.50:8080']) {
+      expect(httpsRedirect(h, NAME, ADDRS)).toBe(null);
     }
   });
   it('403 for a bad Host, also on the login route', async () => {

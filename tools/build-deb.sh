@@ -34,6 +34,8 @@ DEBIAN_TRIXIE_DIGEST=sha256:2dc419c6d7fe3dad0a2f9fd469c34cc90b0f9ba642d8fde837fe
 # Debian packages AgentOS's own code needs (moved here from mkosi.conf.d, so a release can add one).
 # The image's base (kernel, systemd, toolchains, docker, tailscale) stays in mkosi.conf.d.
 DEPENDS=(
+  # agetty execs /bin/login; trixie no longer pulls it in, so boxes before 1.0.4 had no console login.
+  login
   # The venv in /usr/local/lib/agentos/venv is built against this exact Python.
   python3.13
   # node-pty in the web UI is compiled for this Node major.
