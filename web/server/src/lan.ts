@@ -17,7 +17,7 @@ export const WINDOW_MS = 10 * 60_000;
 export const MAX_FAILS_PER_IP = 5;
 export const MAX_FAILS_TOTAL = 30;
 export const FAIL_DELAY_MS = 1000;
-const LOGIN_PATH = '/api/lan/login';
+export const LOGIN_PATH = '/api/lan/login';
 
 export interface LanOpts {
   now: () => number;
@@ -37,11 +37,14 @@ export const defaultLanOpts = (): LanOpts => ({
 export const clientIp = (ip: string | undefined) => (ip ?? '-').replace(/^::ffff:(?=\d+\.\d+\.\d+\.\d+$)/, '');
 export const lanLogin = (ip: string | undefined) => `agent@lan(${clientIp(ip)})`;
 
+// Host, lowercased and with a trailing :443 stripped (browsers omit :443; some clients don't).
+const normalizeHost = (host: string) => host.toLowerCase().replace(/:443$/, '');
+
 // Host must name this box: its hostname, <hostname>.local or one of its addresses (IPv6 in
 // brackets), optionally with :443. Anything else is DNS rebinding, or a mistake.
 export function lanHostAllowed(host: string | undefined, name: string, addrs: string[]): boolean {
   if (!host) return false;
-  const h = host.toLowerCase().replace(/:443$/, '');
+  const h = normalizeHost(host);
   const n = name.toLowerCase();
   return h === n || h === `${n}.local` || addrs.some((a) => h === (a.includes(':') ? `[${a.toLowerCase()}]` : a));
 }
@@ -49,7 +52,20 @@ export function lanHostAllowed(host: string | undefined, name: string, addrs: st
 const digest = (token: string) => createHash('sha256').update(token).digest('hex');
 
 interface Session { created: number; seen: number }
-interface Attempt { at: number; ip: string }
+interface Attempt { at: number; key: string }
+
+// The per-IP rate limit's key: a whole /64 for IPv6 (one device can have many addresses in a
+// single block, e.g. privacy extensions or a /64 per LAN), the exact address for IPv4.
+export function rateKey(ip: string): string {
+  if (!ip.includes(':')) return ip;
+  const [head, tail = ''] = ip.split('::');
+  const headParts = head ? head.split(':') : [];
+  const tailParts = tail ? tail.split(':') : [];
+  const groups = ip.includes('::')
+    ? [...headParts, ...Array(8 - headParts.length - tailParts.length).fill('0'), ...tailParts]
+    : ip.split(':');
+  return groups.slice(0, 4).join(':');
+}
 
 // Sessions are keyed by the token's SHA-256, so the map holds no usable token and a lookup never
 // compares the secret itself. A restart forgets them all.
@@ -83,9 +99,10 @@ export class LanState {
   // ponytail: one list for every address; it never holds more than MAX_FAILS_TOTAL entries.
   attempt(ip: string): Attempt | null {
     const t = this.now();
+    const key = rateKey(ip);
     this.fails = this.fails.filter((f) => t - f.at < WINDOW_MS);
-    if (this.fails.length >= MAX_FAILS_TOTAL || this.fails.filter((f) => f.ip === ip).length >= MAX_FAILS_PER_IP) return null;
-    const a = { at: t, ip };
+    if (this.fails.length >= MAX_FAILS_TOTAL || this.fails.filter((f) => f.key === key).length >= MAX_FAILS_PER_IP) return null;
+    const a = { at: t, key };
     this.fails.push(a);
     return a;
   }
@@ -131,7 +148,9 @@ export function lanDecide(f: LanFacts): Verdict {
     return { ok: false, status: 401, body: 'log in first' };
   }
   if (!safe || f.upgrade) {
-    if (f.origin !== `https://${f.host}`) return { ok: false, status: 403, body: 'bad origin' };
+    // Compared against the normalised Host (:443 stripped), the same form a browser's Origin
+    // takes: a request with "Host: box:443" still sends "Origin: https://box".
+    if (f.origin !== `https://${normalizeHost(f.host!)}`) return { ok: false, status: 403, body: 'bad origin' };
     if (!safe && f.xAgentOS !== '1') return { ok: false, status: 403, body: 'missing X-AgentOS header' };
   }
   return { ok: true, login: lanLogin(f.ip) };

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { CHECK_PASSWORD } from '../src/actions.js';
 import { parseWebConf } from '../src/auth.js';
-import { ABSOLUTE_MS, IDLE_MS, LanState, LOGIN_PAGE, lanHostAllowed, sessionToken, WINDOW_MS, type LanOpts } from '../src/lan.js';
+import { ABSOLUTE_MS, IDLE_MS, LanState, LOGIN_PAGE, lanHostAllowed, rateKey, sessionToken, WINDOW_MS, type LanOpts } from '../src/lan.js';
 import { fakeDeps, H, LOGIN } from './helpers.js';
 
 const PW = 'correct horse battery';
@@ -111,6 +111,23 @@ describe('login', () => {
     expect((await login(PW, IP, { ...CSRF, origin: `http://${HOST}` })).statusCode).toBe(403);
     expect(calls).toEqual([]);
   });
+  it('matches Origin against the normalised Host: "Host: box:443" needs "Origin: https://box"', async () => {
+    const { login } = await lanApp();
+    expect((await login(PW, IP, { host: `${NAME}:443`, origin: `https://${NAME}`, 'x-agentos': '1' }))
+      .statusCode).toBe(200);
+    expect((await login(PW, IP, { host: `${NAME}:443`, origin: `https://${NAME}:443`, 'x-agentos': '1' }))
+      .statusCode).toBe(403);
+  });
+  it('a malformed JSON body is never echoed back', async () => {
+    const { app } = await lanApp();
+    const r = await app.inject({
+      method: 'POST', url: '/api/lan/login', headers: { ...CSRF, 'content-type': 'application/json' },
+      payload: '{"password":"wrongXYZnotjson',
+    });
+    expect(r.statusCode).toBe(400);
+    expect(r.json()).toEqual({ error: 'bad request' });
+    expect(r.body).not.toContain('wrongXYZ');
+  });
 });
 
 describe('rate limiting', () => {
@@ -139,6 +156,14 @@ describe('rate limiting', () => {
     const { login } = await lanApp();
     const codes = (await Promise.all(Array.from({ length: 8 }, () => login('wrong')))).map((r) => r.statusCode).sort();
     expect(codes).toEqual([401, 401, 401, 401, 401, 429, 429, 429]);
+  });
+  it('IPv6 clients share the per-/64 limit; a different /64 is unaffected', async () => {
+    expect(rateKey('2001:db8:1::1')).toBe(rateKey('2001:db8:1::ffff'));
+    expect(rateKey('2001:db8:1::1')).not.toBe(rateKey('2001:db8:2::1'));
+    const { login } = await lanApp();
+    for (let i = 0; i < 5; i++) expect((await login('wrong', `2001:db8:1::${i}`)).statusCode).toBe(401);
+    expect((await login(PW, '2001:db8:1::ffff')).statusCode).toBe(429);        // same /64
+    expect((await login(PW, '2001:db8:2::1')).statusCode).toBe(200);           // a different /64
   });
 });
 

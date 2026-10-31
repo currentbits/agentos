@@ -7,7 +7,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { type Audit, journalAudit } from './audit.js';
 import { authHook, parseTailnetName, readWebConf, type WebConf } from './auth.js';
 import { execRunner, HttpError, type Runner } from './run.js';
-import { LanState, lanAuthHook, lanRoutes, type LanOpts } from './lan.js';
+import { LanState, lanAuthHook, LOGIN_PATH, lanRoutes, type LanOpts } from './lan.js';
 // Route modules (one import per task):
 import { settingsRoutes } from './settings.js';
 import { sessionRoutes } from './sessions.js';
@@ -96,9 +96,14 @@ export async function buildApp(deps: Deps, lan?: LanListener): Promise<FastifyIn
     return payload;
   });
   app.addHook('onRequest', lan ? lanAuthHook(lanState!, lan.opts) : authHook(deps.webConf, deps.tsName));
-  app.setErrorHandler((err, _req, reply) => {
+  app.setErrorHandler((err, req, reply) => {
     if (err instanceof HttpError) return reply.code(err.status).send({ error: err.message, field: err.field });
     const status = (err as { statusCode?: number }).statusCode ?? 500;
+    // A malformed JSON body on the login route must never be echoed back (the parser's message
+    // can quote a fragment of the body, which might be the password the user just typed).
+    if (status === 400 && req.method === 'POST' && req.url.split('?')[0] === LOGIN_PATH) {
+      return reply.code(400).send({ error: 'bad request' });
+    }
     if (status >= 500) app.log.error(err);
     return reply.code(status).send({ error: status >= 500 ? 'internal error' : (err as Error).message });
   });
