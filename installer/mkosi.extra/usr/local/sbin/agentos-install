@@ -81,6 +81,8 @@ install_from_env() {
   if [ -n "$(get AGENTOS_NET_ADDRESS)" ]; then
     valid_iface "$(get AGENTOS_NET_IFACE)" && valid_cidr "$(get AGENTOS_NET_ADDRESS)" &&
       valid_ipv4 "$(get AGENTOS_NET_GATEWAY)" || die "invalid static network settings (AGENTOS_NET_*)"
+    valid_gateway "$(get AGENTOS_NET_ADDRESS)" "$(get AGENTOS_NET_GATEWAY)" ||
+      die "AGENTOS_NET_GATEWAY must be your router's address on the same network as AGENTOS_NET_ADDRESS, not this machine's own"
     for v in $(get AGENTOS_NET_DNS | tr ',' ' '); do valid_ipv4 "$v" || die "invalid DNS server $v"; done
   fi
   v=$(get AGENTOS_GITHUB_USER)
@@ -237,7 +239,8 @@ tui() {
     local nics=(); for k in /sys/class/net/*; do k=${k##*/}; [ "$k" = lo ] || nics+=("$k" ""); done
     iface=$(W --title Network --menu "Interface" 14 60 6 "${nics[@]}") || return 1
     addr=$(ask Network "Address with prefix, e.g. 192.168.1.50/24" "" valid_cidr) || return 1
-    gw=$(ask Network "Gateway, e.g. 192.168.1.1" "" valid_ipv4) || return 1
+    gw_ok() { valid_gateway "$addr" "$1"; }
+    gw=$(ask Network "Gateway: your router's address on the same network (not ${addr%/*}), e.g. 192.168.1.1" "" gw_ok) || return 1
     dns=$(W --title Network --inputbox "DNS servers, comma separated" 10 60 "1.1.1.1,9.9.9.9") || return 1
   fi
   pw=$(W --title Access --passwordbox "Password for user 'agent' (console + sudo). Empty = none, set later." 10 72) || return 1

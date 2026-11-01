@@ -50,6 +50,14 @@ valid_ipv4() {
   for o in $1; do [ "$((10#$o))" -le 255 ] || return 1; done
 }
 valid_cidr() { [[ $1 == */* ]] && valid_ipv4 "${1%/*}" && [[ ${1#*/} =~ ^([0-9]|[12][0-9]|3[0-2])$ ]]; }
+ip4_int() { local o n=0 IFS=.; for o in $1; do n=$((n * 256 + 10#$o)); done; echo "$n"; }
+# valid_gateway <addr/prefix> <gw>: gw is on addr's subnet and is not addr itself (a box routed via itself has no IPv4 internet).
+valid_gateway() {
+  valid_cidr "$1" && valid_ipv4 "$2" && [ "${1%/*}" != "$2" ] || return 1
+  local p=${1#*/} m
+  m=$(( (0xffffffff << (32 - p)) & 0xffffffff ))
+  [ $(( $(ip4_int "${1%/*}") & m )) -eq $(( $(ip4_int "$2") & m )) ]
+}
 # Keep in sync with cmd_add_ssh_key in package/usr/local/bin/agentos-config (the target re-validates).
 valid_ssh_pubkey() {
   [[ $1 != *$'\n'* && $1 != *$'\r'* ]] &&

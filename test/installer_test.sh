@@ -61,6 +61,12 @@ done
 if valid_ipv4 "1.1.1.1;evil"; then fail "ipv4 accepted DNS injection"; fi
 valid_cidr 192.168.1.10/24 || fail cidr
 for bad in 192.168.1.10 192.168.1.10/33 300.1.1.1/24; do if valid_cidr "$bad"; then fail "cidr accepted: $bad"; fi; done
+valid_gateway 192.168.2.225/24 192.168.2.254 || fail gateway
+valid_gateway 10.1.2.3/8 10.200.0.1 || fail "gateway /8"
+# The box's own address as gateway left an installed box with no IPv4 internet (GitHub has no IPv6).
+for bad in "192.168.2.225/24 192.168.2.225" "192.168.2.225/24 192.168.3.1" "192.168.2.225/24 x" "192.168.2.225 192.168.2.1"; do
+  if valid_gateway $bad; then fail "gateway accepted: $bad"; fi
+done
 valid_iface enp3s0 || fail iface
 for bad in "en p" averyveryverylongname ""; do if valid_iface "$bad"; then fail "iface accepted: $bad"; fi; done
 valid_password_hash '$6$salt$hash' || fail hash6
