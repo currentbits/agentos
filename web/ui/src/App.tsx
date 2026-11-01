@@ -11,12 +11,14 @@ import { Desktops } from './pages/Desktops';
 import { DesktopView } from './pages/DesktopView';
 import { System } from './pages/System';
 import { CI } from './pages/CI';
+import { Agents } from './pages/Agents';
 
-const NAV = [['/', 'Overview'], ['/sessions', 'Sessions'], ['/desktops', 'Desktops'], ['/ci', 'CI'], ['/settings', 'Settings'], ['/system', 'System']];
+const NAV = [['/', 'Overview'], ['/agents', 'Agents'], ['/sessions', 'Sessions'], ['/desktops', 'Desktops'], ['/ci', 'CI'], ['/settings', 'Settings'], ['/system', 'System']];
 
 function page(path: string, me: Me | null) {
   const [, section, arg] = path.split('/');
   switch (section) {
+    case 'agents': return <Agents />;
     case 'settings': return <Settings me={me} />;
     case 'sessions': return arg ? <Terminal id={decodeURIComponent(arg)} /> : <Sessions />;
     case 'desktops': return arg ? <DesktopView n={Number(arg)} /> : <Desktops />;

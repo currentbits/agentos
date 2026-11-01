@@ -27,3 +27,7 @@ export interface SolentaStatus {
   modeA: { enabled: boolean; service: string; version: string | null; webToken: boolean };
   preflight: PreflightItem[];
 }
+export interface Agent {
+  pid: number; cli: string; dir: string | null; started: string; cpuPercent: number; working: boolean;
+  origin: string; session: string | null;
+}

@@ -18,6 +18,7 @@ import { systemRoutes } from './system.js';
 import { ciRoutes } from './ci.js';
 import { solentaRoutes } from './solenta.js';
 import { updateRoutes } from './update.js';
+import { agentRoutes } from './agents.js';
 
 export interface Deps {
   run: Runner;
@@ -119,6 +120,7 @@ export async function buildApp(deps: Deps, lan?: LanListener): Promise<FastifyIn
   ciRoutes(app, deps);
   solentaRoutes(app, deps);
   updateRoutes(app, deps);
+  agentRoutes(app, deps);
   if (lan) lanRoutes(app, deps, lanState!, lan.opts);
 
   // Only what DesktopView imports (core/rfb.js and the vendor/ modules it loads), not noVNC's own

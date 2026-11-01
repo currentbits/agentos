@@ -4,11 +4,12 @@ import { ErrorText } from '../components/ErrorText';
 import { duration, gib, pct } from '../format';
 import { newDesktop, openTerminal } from '../quick';
 import { Link, navigate } from '../router';
-import type { CiRun, Desktop, Health, Session, Tailscale, UpdateState } from '../types';
+import type { Agent, CiRun, Desktop, Health, Session, Tailscale, UpdateState } from '../types';
 import { usePoll } from '../usePoll';
 
 export function Overview() {
   const health = usePoll(() => api<Health>('/api/system/health'), 5000);
+  const agents = usePoll(() => api<Agent[]>('/api/agents'), 5000);
   const sessions = usePoll(() => api<Session[]>('/api/sessions'), 5000);
   const desktops = usePoll(() => api<{ desktops: Desktop[] }>('/api/desktops'), 5000);
   const ts = usePoll(() => api<Tailscale>('/api/system/tailscale'), 30000);
@@ -35,6 +36,10 @@ export function Overview() {
           <div className="card"><h3>CPU</h3><p>{h.cpuPercent} %</p><small>load {h.load.map((l) => l.toFixed(2)).join(' ')}</small></div>
           <div className="card"><h3>Memory</h3><p>{pct(h.memory.usedBytes, h.memory.totalBytes)} %</p><small>{gib(h.memory.usedBytes)} of {gib(h.memory.totalBytes)}</small></div>
           <div className="card"><h3>Disk</h3><p>{pct(h.disk.usedBytes, h.disk.totalBytes)} %</p><small>{gib(h.disk.usedBytes)} of {gib(h.disk.totalBytes)}</small></div>
+          <div className="card"><h3>Agents</h3>
+            <p><Link to="/agents">{agents.data ? `${agents.data.filter((a) => a.working).length} working` : '…'}</Link></p>
+            <small>{agents.data ? `${agents.data.length} running` : ''}</small>
+          </div>
           <div className="card"><h3>Sessions</h3><p>{sessions.data?.filter((s) => s.state === 'running').length ?? '…'}</p></div>
           <div className="card"><h3>Desktops</h3><p>{desktops.data?.desktops.length ?? '…'}</p></div>
           <div className="card"><h3>CI</h3>

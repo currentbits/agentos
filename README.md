@@ -188,6 +188,7 @@ sudo agentos-config set AGENTOS_WEB_USERS you@example.com && sudo agentos-config
 | Page | What it does |
 |---|---|
 | **Overview** | Health, agents, desktops, the latest CI run, and the **"AgentOS X is available"** banner, with release notes. |
+| **Agents** | Every claude, codex, opencode and grok process running on the box, however it was started (web UI session, tmux, Solenta, SSH, CI): folder, how long it has run, and whether it is working right now (it or its tools used CPU in the last half second; an agent waiting on the model shows as idle). |
 | **Sessions** | Start or attach to agent sessions (claude, codex, opencode, grok, or a shell) in tmux, optionally in a fresh clone of a git repo. |
 | **Terminal** | A full terminal in the browser. |
 | **Desktops** | Live thumbnails. Open one in noVNC, create, or destroy. |
