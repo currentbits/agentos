@@ -49,6 +49,8 @@ DEPENDS=(
   libnss3 libnspr4 libgtk-3-0t64 libgbm1 libasound2t64 libatk1.0-0t64 libatk-bridge2.0-0t64
   libatspi2.0-0t64 libcups2t64 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxrandr2 libxfixes3
   libpango-1.0-0 libcairo2 libdbus-1-3 libexpat1 libxext6 libx11-6 libxcb1 libglib2.0-0t64
+  # Solenta 0.27 --headless still needs an X display (GTK aborts without one): solenta-start's Xvfb.
+  xvfb
 )
 
 # act runs .github/workflows for agentos-ci. Pinned by version and sha256 (the release's
